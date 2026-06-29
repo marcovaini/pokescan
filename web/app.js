@@ -20,6 +20,7 @@ const els = {
   views: document.querySelectorAll(".view"),
   tabs: document.querySelectorAll(".tab"),
   camera: document.querySelector("#camera"),
+  cameraGuide: document.querySelector(".camera-guide"),
   canvas: document.querySelector("#capture-canvas"),
   startCamera: document.querySelector("#start-camera"),
   captureCard: document.querySelector("#capture-card"),
@@ -105,14 +106,16 @@ async function captureAndRecognize() {
 
   try {
     const ocr = await recognize(imageDataUrl);
-    setStatus(ocr.suggestedName ? `OCR completato: ${ocr.suggestedName}` : "OCR completato, nome non sicuro.");
+    const recognized = ocr.suggestedName || ocr.candidates?.[0] || "nome non sicuro";
+    setStatus(`OCR completato: ${recognized}`);
 
     let tcgCard = null;
     let tcgError = "";
-    if (ocr.suggestedName) {
+    const queries = buildSearchQueries(ocr);
+
+    if (queries.length) {
       try {
-        const cards = await searchCards(ocr.suggestedName);
-        tcgCard = selectBestCard(cards, ocr.suggestedName);
+        tcgCard = await searchCardCandidates(queries, ocr);
       } catch (error) {
         tcgError = readError(error);
       }
@@ -126,7 +129,9 @@ async function captureAndRecognize() {
     state.selectedCardId = stored.id;
 
     if (tcgError) {
-      setStatus(`Carta salvata. Dati TCG non disponibili: ${tcgError}`);
+      setStatus(`Carta salvata. Dati provider non disponibili: ${tcgError}`);
+    } else if (!tcgCard) {
+      setStatus("Carta salvata. OCR completato ma nessun match affidabile trovato.");
     } else {
       setStatus("Carta salvata nell'archivio locale.");
     }
@@ -138,13 +143,42 @@ async function captureAndRecognize() {
 function captureFrame() {
   const video = els.camera;
   const canvas = els.canvas;
-  const width = video.videoWidth || 900;
-  const height = video.videoHeight || 1200;
-  canvas.width = width;
-  canvas.height = height;
+  const videoWidth = video.videoWidth || 900;
+  const videoHeight = video.videoHeight || 1200;
+  const region = getGuideCaptureRegion(video, els.cameraGuide, videoWidth, videoHeight);
+
+  canvas.width = region.sw;
+  canvas.height = region.sh;
   const ctx = canvas.getContext("2d");
-  ctx.drawImage(video, 0, 0, width, height);
-  return canvas.toDataURL("image/jpeg", 0.9);
+  ctx.drawImage(video, region.sx, region.sy, region.sw, region.sh, 0, 0, region.sw, region.sh);
+  return canvas.toDataURL("image/jpeg", 0.95);
+}
+
+function getGuideCaptureRegion(video, guide, sourceWidth, sourceHeight) {
+  if (!guide) {
+    return { sx: 0, sy: 0, sw: sourceWidth, sh: sourceHeight };
+  }
+
+  const videoRect = video.getBoundingClientRect();
+  const guideRect = guide.getBoundingClientRect();
+  const scale = Math.max(sourceWidth / videoRect.width, sourceHeight / videoRect.height);
+
+  const cropWidth = videoRect.width * scale;
+  const cropHeight = videoRect.height * scale;
+  const offsetX = Math.max(0, (cropWidth - sourceWidth) / 2);
+  const offsetY = Math.max(0, (cropHeight - sourceHeight) / 2);
+
+  const left = Math.max(0, (guideRect.left - videoRect.left) * scale - offsetX);
+  const top = Math.max(0, (guideRect.top - videoRect.top) * scale - offsetY);
+  const width = Math.min(sourceWidth - left, guideRect.width * scale);
+  const height = Math.min(sourceHeight - top, guideRect.height * scale);
+
+  return {
+    sx: Math.max(0, Math.round(left)),
+    sy: Math.max(0, Math.round(top)),
+    sw: Math.max(1, Math.round(width)),
+    sh: Math.max(1, Math.round(height))
+  };
 }
 
 async function recognize(imageDataUrl) {
@@ -167,10 +201,66 @@ async function searchCards(name) {
   return payload.data || [];
 }
 
-function selectBestCard(cards, name) {
+async function searchCardCandidates(queries, ocr) {
+  let lastError = null;
+
+  for (const query of queries) {
+    try {
+      const cards = await searchCards(query);
+      const best = selectBestCard(cards, ocr);
+      if (best) return best;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (lastError) throw lastError;
+  return null;
+}
+
+function buildSearchQueries(ocr) {
+  const names = [ocr.suggestedName, ...(ocr.candidates || [])]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  const cardNumber = String(ocr.cardNumber || "").trim();
+  const queries = [];
+
+  names.forEach((name) => {
+    if (cardNumber) queries.push(`${name} ${cardNumber}`);
+    queries.push(name);
+  });
+
+  if (cardNumber) queries.push(cardNumber);
+  return uniqueStrings(queries);
+}
+
+function selectBestCard(cards, ocr) {
   if (!cards.length) return null;
-  const target = normalizeText(name);
-  return cards.find((card) => normalizeText(card.name) === target) || cards[0];
+
+  const names = [ocr.suggestedName, ...(ocr.candidates || [])].map(normalizeText).filter(Boolean);
+  const number = normalizeCardNumber(ocr.cardNumber);
+  let best = null;
+  let bestScore = -1;
+
+  for (const card of cards) {
+    const cardName = normalizeText(card.name);
+    const cardNumber = normalizeCardNumber(card.number);
+    let score = 0;
+
+    if (names[0] && cardName === names[0]) score += 120;
+    if (names.includes(cardName)) score += 70;
+    if (names.some((name) => name && (cardName.includes(name) || name.includes(cardName)))) score += 30;
+    if (number && cardNumber === number) score += 140;
+    if (card.images?.large || card.images?.small) score += 5;
+    if (card.prices?.market != null) score += 5;
+
+    if (score > bestScore) {
+      best = card;
+      bestScore = score;
+    }
+  }
+
+  return bestScore >= 40 ? best : null;
 }
 
 function createStoredCard({ imageDataUrl, ocr, tcgCard }) {
@@ -178,9 +268,9 @@ function createStoredCard({ imageDataUrl, ocr, tcgCard }) {
   return {
     id,
     tcgId: tcgCard?.id || id,
-    name: tcgCard?.name || ocr.suggestedName || "Carta sconosciuta",
+    name: tcgCard?.name || ocr.suggestedName || ocr.candidates?.[0] || "Carta sconosciuta",
     setName: tcgCard?.set?.name || "Set non riconosciuto",
-    number: tcgCard?.number || "n/d",
+    number: tcgCard?.number || ocr.cardNumber || "n/d",
     rarity: tcgCard?.rarity || "n/d",
     supertype: tcgCard?.supertype || "Pokemon",
     subtypes: tcgCard?.subtypes || [],
@@ -192,6 +282,8 @@ function createStoredCard({ imageDataUrl, ocr, tcgCard }) {
     price: extractPrice(tcgCard),
     raw: tcgCard || {},
     scanText: ocr.rawText || "",
+    ocrCandidates: ocr.candidates || [],
+    ocrCardNumber: ocr.cardNumber || "",
     createdAt: Date.now(),
   };
 }
@@ -267,6 +359,9 @@ function openDetail(cardId) {
       <ul>${attacks}</ul>
       <h3>Testo OCR</h3>
       <p class="meta">${escapeHtml(card.scanText || "n/d")}</p>
+      <h3>Candidati OCR</h3>
+      <p class="meta">${escapeHtml((card.ocrCandidates || []).join(", ") || "n/d")}</p>
+      <p class="meta">Numero rilevato: ${escapeHtml(card.ocrCardNumber || "n/d")}</p>
     </article>
   `;
   showView("detail");
@@ -462,10 +557,13 @@ function wrapRequest(request) {
 function renderScanResult(card, ocr, tcgCard, tcgError = "") {
   els.scanResult.hidden = false;
   const matchText = tcgCard ? "trovato" : tcgError ? `non disponibile (${tcgError})` : "non trovato";
+  const candidates = (ocr.candidates || []).slice(0, 3).join(", ");
   els.scanResult.innerHTML = `
     <h3>${escapeHtml(card.name)}</h3>
     <p>${escapeHtml(card.setName)} - ${escapeHtml(card.rarity)}</p>
     <p>Confidenza OCR: <strong>${escapeHtml(ocr.confidence ?? "n/d")}</strong></p>
+    <p>Numero carta OCR: <strong>${escapeHtml(ocr.cardNumber || "n/d")}</strong></p>
+    <p>Candidati OCR: <strong>${escapeHtml(candidates || "n/d")}</strong></p>
     <p>Match TCG: <strong>${escapeHtml(matchText)}</strong></p>
     <button class="secondary-action" id="open-last-card">Apri dettaglio</button>
   `;
@@ -492,6 +590,14 @@ function normalizeText(value) {
   return String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+function normalizeCardNumber(value) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9/]+/g, "").trim();
+}
+
+function uniqueStrings(values) {
+  return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
+}
+
 function trimSlash(value) {
   return String(value || "").trim().replace(/\/$/, "");
 }
@@ -511,3 +617,7 @@ function escapeHtml(value) {
 function escapeAttr(value) {
   return escapeHtml(value).replace(/'/g, "&#39;");
 }
+
+
+
+
