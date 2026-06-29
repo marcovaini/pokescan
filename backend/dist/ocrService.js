@@ -6,20 +6,27 @@ export class OCRService {
         try {
             const imageBuffer = decodeImage(imageBase64);
             const regions = await buildRegions(imageBuffer);
-            await worker.setParameters({
-                preserve_interword_spaces: "1",
-                tessedit_char_blacklist: "{}[]<>"
-            });
-            const namePass = await recognizeRegion(worker, regions.name, PSM.SINGLE_LINE);
-            const nameAltPass = await recognizeRegion(worker, regions.nameAlt, PSM.SINGLE_BLOCK);
-            const fullPass = await recognizeRegion(worker, regions.full, PSM.SPARSE_TEXT);
-            const numberPass = await recognizeRegion(worker, regions.number, PSM.SINGLE_LINE);
-            const passes = [namePass, nameAltPass, fullPass, numberPass].filter(Boolean);
-            const rawText = passes.map((pass) => pass.text).filter(Boolean).join("\n").trim();
-            const candidates = inferCardNames(passes.map((pass) => pass.text));
+            const namePass = await recognizeName(worker, regions.name, PSM.SINGLE_LINE);
+            const nameWidePass = await recognizeName(worker, regions.nameWide, PSM.SINGLE_BLOCK);
+            const numberPass = await recognizeNumber(worker, regions.number, PSM.SINGLE_LINE);
+            const numberWidePass = await recognizeNumber(worker, regions.numberWide, PSM.SINGLE_LINE);
+            const candidates = inferCardNames([namePass.text, nameWidePass.text]);
             const suggestedName = candidates[0] ?? "";
-            const cardNumber = inferCardNumber(passes.map((pass) => pass.text));
-            const confidence = averageConfidence(passes);
+            const cardNumber = inferCardNumber([numberPass.text, numberWidePass.text]);
+            const confidence = weightedConfidence([
+                { pass: namePass, weight: 0.4 },
+                { pass: nameWidePass, weight: 0.25 },
+                { pass: numberPass, weight: 0.25 },
+                { pass: numberWidePass, weight: 0.1 }
+            ]);
+            const rawText = [
+                suggestedName ? `NAME: ${suggestedName}` : "",
+                cardNumber ? `NUMBER: ${cardNumber}` : "",
+                namePass.text ? `NAME_RAW: ${namePass.text}` : "",
+                nameWidePass.text ? `NAME_WIDE_RAW: ${nameWidePass.text}` : "",
+                numberPass.text ? `NUMBER_RAW: ${numberPass.text}` : "",
+                numberWidePass.text ? `NUMBER_WIDE_RAW: ${numberWidePass.text}` : ""
+            ].filter(Boolean).join("\n");
             return {
                 rawText,
                 suggestedName,
@@ -39,50 +46,83 @@ async function buildRegions(input) {
     const width = metadata.width ?? 0;
     const height = metadata.height ?? 0;
     if (!width || !height) {
-        const fallback = await preprocess(input, { width: 1800, threshold: 150 });
-        return { full: fallback, name: fallback, nameAlt: fallback, number: fallback };
+        const fallback = await preprocess(input, { width: 2400, threshold: 156 });
+        return {
+            name: fallback,
+            nameWide: fallback,
+            number: fallback,
+            numberWide: fallback
+        };
     }
-    const nameRegion = {
-        left: Math.max(0, Math.round(width * 0.08)),
-        top: Math.max(0, Math.round(height * 0.05)),
+    const name = {
+        left: Math.max(0, Math.round(width * 0.10)),
+        top: Math.max(0, Math.round(height * 0.045)),
+        width: Math.max(1, Math.round(width * 0.60)),
+        height: Math.max(1, Math.round(height * 0.09))
+    };
+    const nameWide = {
+        left: Math.max(0, Math.round(width * 0.07)),
+        top: Math.max(0, Math.round(height * 0.035)),
         width: Math.max(1, Math.round(width * 0.72)),
         height: Math.max(1, Math.round(height * 0.12))
     };
-    const nameAltRegion = {
-        left: Math.max(0, Math.round(width * 0.06)),
-        top: Math.max(0, Math.round(height * 0.04)),
-        width: Math.max(1, Math.round(width * 0.80)),
-        height: Math.max(1, Math.round(height * 0.18))
-    };
-    const numberRegion = {
-        left: Math.max(0, Math.round(width * 0.54)),
-        top: Math.max(0, Math.round(height * 0.84)),
+    const number = {
+        left: Math.max(0, Math.round(width * 0.10)),
+        top: Math.max(0, Math.round(height * 0.885)),
         width: Math.max(1, Math.round(width * 0.34)),
-        height: Math.max(1, Math.round(height * 0.10))
+        height: Math.max(1, Math.round(height * 0.055))
     };
-    const [full, name, nameAlt, number] = await Promise.all([
-        preprocess(await base.clone().toBuffer(), { width: 2200, threshold: 148 }),
-        preprocess(await base.clone().extract(nameRegion).toBuffer(), { width: 2600, threshold: 162 }),
-        preprocess(await base.clone().extract(nameAltRegion).toBuffer(), { width: 2800, threshold: 152 }),
-        preprocess(await base.clone().extract(numberRegion).toBuffer(), { width: 2200, threshold: 168 })
+    const numberWide = {
+        left: Math.max(0, Math.round(width * 0.08)),
+        top: Math.max(0, Math.round(height * 0.86)),
+        width: Math.max(1, Math.round(width * 0.52)),
+        height: Math.max(1, Math.round(height * 0.09))
+    };
+    const [nameBuffer, nameWideBuffer, numberBuffer, numberWideBuffer] = await Promise.all([
+        preprocess(await base.clone().extract(name).toBuffer(), { width: 3200, threshold: 160 }),
+        preprocess(await base.clone().extract(nameWide).toBuffer(), { width: 3400, threshold: 154 }),
+        preprocess(await base.clone().extract(number).toBuffer(), { width: 2600, threshold: 172 }),
+        preprocess(await base.clone().extract(numberWide).toBuffer(), { width: 2800, threshold: 168 })
     ]);
-    return { full, name, nameAlt, number };
+    return {
+        name: nameBuffer,
+        nameWide: nameWideBuffer,
+        number: numberBuffer,
+        numberWide: numberWideBuffer
+    };
 }
 async function preprocess(input, options) {
     return sharp(input)
         .grayscale()
         .normalize()
-        .sharpen({ sigma: 1.1 })
+        .modulate({ brightness: 1.08, saturation: 0 })
+        .sharpen({ sigma: 1.2 })
         .resize({ width: options.width, withoutEnlargement: false })
         .threshold(options.threshold)
         .png()
         .toBuffer();
 }
-async function recognizeRegion(worker, input, psm) {
-    await worker.setParameters({ tessedit_pageseg_mode: psm });
+async function recognizeName(worker, input, psm) {
+    await worker.setParameters({
+        tessedit_pageseg_mode: psm,
+        preserve_interword_spaces: "1",
+        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-' "
+    });
     const { data } = await worker.recognize(input);
     return {
-        text: sanitizeOcrText(data.text ?? ""),
+        text: sanitizeNameText(data.text ?? ""),
+        confidence: Number((data.confidence ?? 0).toFixed(2))
+    };
+}
+async function recognizeNumber(worker, input, psm) {
+    await worker.setParameters({
+        tessedit_pageseg_mode: psm,
+        preserve_interword_spaces: "0",
+        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/"
+    });
+    const { data } = await worker.recognize(input);
+    return {
+        text: sanitizeNumberText(data.text ?? ""),
         confidence: Number((data.confidence ?? 0).toFixed(2))
     };
 }
@@ -93,23 +133,31 @@ function decodeImage(value) {
     }
     return Buffer.from(value, "base64");
 }
-function sanitizeOcrText(text) {
+function sanitizeNameText(text) {
     return text
         .replace(/[|]/g, "I")
         .replace(/[��]/g, '"')
         .replace(/[��]/g, "'")
-        .replace(/[^\S\r\n]+/g, " ")
-        .replace(/\n{3,}/g, "\n\n")
+        .replace(/\b(?:BASIC|STAGE ?1|STAGE ?2|TRAINER|ENERGY|HP)\b/gi, " ")
+        .replace(/[^A-Za-z0-9.' -]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+function sanitizeNumberText(text) {
+    return text
+        .replace(/[^A-Za-z0-9/]+/g, " ")
+        .replace(/\s+/g, " ")
         .trim();
 }
 function inferCardNames(texts) {
     const ranked = new Map();
     for (const text of texts) {
-        for (const line of text.split(/\r?\n/)) {
-            const candidate = normalizeCandidate(line);
-            if (!candidate || isLikelyNoise(candidate)) {
-                continue;
-            }
+        const lines = text
+            .split(/\r?\n/)
+            .flatMap((line) => splitNameCandidates(line))
+            .map(normalizeCandidate)
+            .filter((candidate) => candidate && !isLikelyNoise(candidate));
+        for (const candidate of lines) {
             const score = scoreCandidate(candidate);
             const current = ranked.get(candidate) ?? 0;
             if (score > current) {
@@ -122,56 +170,70 @@ function inferCardNames(texts) {
         .map(([candidate]) => candidate)
         .slice(0, 5);
 }
+function splitNameCandidates(line) {
+    const clean = sanitizeNameText(line);
+    if (!clean) {
+        return [];
+    }
+    return [clean]
+        .concat(clean.split(/\s{2,}/g))
+        .concat(clean.split(/(?<=\D)(?=\d)|(?<=\d)(?=\D)/g).length > 3 ? [] : []);
+}
 function normalizeCandidate(line) {
     return line
-        .replace(/[^A-Za-z0-9.' -]/g, " ")
-        .replace(/\b(?:BASIC|STAGE\s?1|STAGE\s?2|TRAINER|ENERGY|HP)\b/gi, " ")
+        .replace(/\b(?:Pokemon|Pok mon)\b/gi, " ")
         .replace(/\s+/g, " ")
         .trim();
 }
 function isLikelyNoise(candidate) {
-    if (candidate.length < 3 || candidate.length > 28) {
+    if (candidate.length < 3 || candidate.length > 24) {
         return true;
     }
-    const tokens = candidate.split(" ").filter(Boolean);
-    if (!tokens.length || tokens.length > 4) {
+    const words = candidate.split(" ").filter(Boolean);
+    if (!words.length || words.length > 3) {
         return true;
     }
     const letters = (candidate.match(/[A-Za-z]/g) ?? []).length;
     const digits = (candidate.match(/[0-9]/g) ?? []).length;
-    if (letters < 2 || digits > letters) {
+    if (letters < 3 || digits > 2) {
         return true;
     }
-    return /(weakness|resistance|retreat|ability|attacks?|damage|paralyz|discard|coin)/i.test(candidate);
+    return /(weakness|resistance|retreat|damage|coin|attack|discard)/i.test(candidate);
 }
 function scoreCandidate(candidate) {
     let score = 0;
     const words = candidate.split(" ").filter(Boolean);
     const letters = (candidate.match(/[A-Za-z]/g) ?? []).length;
-    score += Math.min(letters, 20) * 2;
-    score += Math.max(0, 20 - Math.abs(candidate.length - 9));
-    score += words.length === 1 ? 18 : 10;
-    if (/^[A-Z][A-Za-z0-9.'-]+(?: [A-Z][A-Za-z0-9.'-]+){0,2}$/.test(candidate)) {
-        score += 16;
+    score += Math.min(letters, 18) * 3;
+    score += Math.max(0, 18 - Math.abs(candidate.length - 10));
+    score += words.length === 1 ? 14 : 8;
+    if (/^[A-Z][A-Za-z0-9.'-]+(?: [A-Z][A-Za-z0-9.'-]+){0,1}$/.test(candidate)) {
+        score += 20;
     }
-    if (/ex|gx|vstar|vmax|v-union|radiant|prime|legend/i.test(candidate)) {
-        score += 8;
+    if (/ex|gx|v|vstar|vmax|radiant|prime|break/i.test(candidate)) {
+        score += 6;
     }
     return score;
 }
 function inferCardNumber(texts) {
     for (const text of texts) {
-        const match = text.match(/\b([A-Z]{0,3}\d{1,3})\s*[\/]\s*([A-Z]?\d{1,3})\b/i);
-        if (match) {
-            return `${match[1].toUpperCase()}/${match[2].toUpperCase()}`;
+        const compact = text.replace(/\s+/g, "");
+        const exact = compact.match(/\b([A-Z]{0,3}\d{1,3})\/([A-Z]{0,3}\d{1,3})\b/i);
+        if (exact) {
+            return `${exact[1].toUpperCase()}/${exact[2].toUpperCase()}`;
+        }
+        const loose = compact.match(/\b([A-Z]{0,3}\d{1,3})[Il]?\/([A-Z]{0,3}\d{1,3})\b/i);
+        if (loose) {
+            return `${loose[1].toUpperCase()}/${loose[2].toUpperCase()}`;
         }
     }
     return "";
 }
-function averageConfidence(passes) {
-    if (!passes.length) {
+function weightedConfidence(entries) {
+    const totalWeight = entries.reduce((sum, entry) => sum + entry.weight, 0);
+    if (!totalWeight) {
         return 0;
     }
-    const total = passes.reduce((sum, pass) => sum + (Number.isFinite(pass.confidence) ? pass.confidence : 0), 0);
-    return Number((total / passes.length).toFixed(2));
+    const total = entries.reduce((sum, entry) => sum + (Number.isFinite(entry.pass.confidence) ? entry.pass.confidence * entry.weight : 0), 0);
+    return Number((total / totalWeight).toFixed(2));
 }

@@ -235,23 +235,23 @@ async function searchCardCandidates(queries, ocr) {
 function buildSearchQueries(ocr) {
   const names = [ocr.suggestedName, ...(ocr.candidates || [])]
     .map((value) => String(value || "").trim())
-    .filter(Boolean);
+    .filter((value, index) => value && index < 3);
   const cardNumber = String(ocr.cardNumber || "").trim();
   const queries = [];
 
-  names.forEach((name) => {
-    if (cardNumber) queries.push(`${name} ${cardNumber}`);
-    queries.push(name);
-  });
-
-  if (cardNumber) queries.push(cardNumber);
+  if (names[0] && cardNumber) queries.push(`${names[0]} ${cardNumber}`);
+  names.forEach((name) => queries.push(name));
+  if (cardNumber && names[1]) queries.push(`${names[1]} ${cardNumber}`);
   return uniqueStrings(queries);
 }
 
 function selectBestCard(cards, ocr) {
   if (!cards.length) return null;
 
-  const names = [ocr.suggestedName, ...(ocr.candidates || [])].map(normalizeText).filter(Boolean);
+  const names = [ocr.suggestedName, ...(ocr.candidates || [])]
+    .map(normalizeText)
+    .filter((value, index) => value && index < 3);
+  const primaryName = names[0] || "";
   const number = normalizeCardNumber(ocr.cardNumber);
   let best = null;
   let bestScore = -1;
@@ -261,12 +261,12 @@ function selectBestCard(cards, ocr) {
     const cardNumber = normalizeCardNumber(card.number);
     let score = 0;
 
-    if (names[0] && cardName === names[0]) score += 120;
-    if (names.includes(cardName)) score += 70;
-    if (names.some((name) => name && (cardName.includes(name) || name.includes(cardName)))) score += 30;
-    if (number && cardNumber === number) score += 140;
+    if (primaryName && cardName === primaryName) score += 150;
+    if (primaryName && similarity(cardName, primaryName) >= 0.88) score += 90;
+    if (names.includes(cardName)) score += 50;
+    if (number && cardNumber === number) score += 180;
+    if (number && cardNumber && cardNumber.startsWith(number.split("/")[0] || "")) score += 30;
     if (card.images?.large || card.images?.small) score += 5;
-    if (card.prices?.market != null) score += 5;
 
     if (score > bestScore) {
       best = card;
@@ -274,7 +274,7 @@ function selectBestCard(cards, ocr) {
     }
   }
 
-  return bestScore >= 40 ? best : null;
+  return bestScore >= 90 ? best : null;
 }
 
 function createStoredCard({ imageDataUrl, ocr, tcgCard }) {
@@ -608,6 +608,15 @@ function normalizeCardNumber(value) {
   return String(value || "").toUpperCase().replace(/[^A-Z0-9/]+/g, "").trim();
 }
 
+function similarity(left, right) {
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  const a = left.split(" ");
+  const b = right.split(" ");
+  const overlap = a.filter((part) => b.includes(part)).length;
+  return overlap / Math.max(a.length, b.length, 1);
+}
+
 function uniqueStrings(values) {
   return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
 }
@@ -631,6 +640,7 @@ function escapeHtml(value) {
 function escapeAttr(value) {
   return escapeHtml(value).replace(/'/g, "&#39;");
 }
+
 
 
 
