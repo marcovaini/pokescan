@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PokemonScan Web</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">PS</span>
+          <div>
+            <h1>PokemonScan</h1>
+            <p>Archivio e deck builder locale</p>
+          </div>
+        </div>
+        <nav class="tabs" aria-label="Sezioni principali">
+          <button class="tab is-active" data-view="scan">Scansione</button>
+          <button class="tab" data-view="archive">Archivio</button>
+          <button class="tab" data-view="decks">Mazzi</button>
+          <button class="tab" data-view="settings">Impostazioni</button>
+        </nav>
+        <div class="sidebar-status">
+          <span id="card-count">0 carte</span>
+          <span id="deck-count">0 mazzi</span>
+        </div>
+      </aside>
+
+      <main class="content">
+        <section class="view is-active" id="view-scan">
+          <header class="view-header">
+            <div>
+              <p class="eyebrow">Scanner</p>
+              <h2>Scansiona una carta</h2>
+            </div>
+            <button class="secondary-action" id="start-camera">Avvia camera</button>
+          </header>
+
+          <div class="scan-layout">
+            <div class="camera-panel">
+              <video id="camera" autoplay playsinline muted></video>
+              <canvas id="capture-canvas" hidden></canvas>
+              <div class="camera-guide"></div>
+            </div>
+            <div class="scan-actions">
+              <button class="primary-action" id="capture-card">Scatta e riconosci</button>
+              <div class="status-box" id="scan-status">Camera non avviata.</div>
+              <article class="result-card" id="scan-result" hidden></article>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-archive">
+          <header class="view-header">
+            <div>
+              <p class="eyebrow">Database locale</p>
+              <h2>Archivio carte</h2>
+            </div>
+            <input id="archive-search" class="search-input" placeholder="Cerca carta, set, rarita" />
+          </header>
+          <div class="card-grid" id="archive-list"></div>
+        </section>
+
+        <section class="view" id="view-detail">
+          <button class="secondary-action" id="back-to-archive">Torna all'archivio</button>
+          <div id="detail-content" class="detail-layout"></div>
+        </section>
+
+        <section class="view" id="view-decks">
+          <header class="view-header">
+            <div>
+              <p class="eyebrow">Competizione</p>
+              <h2>Deck builder</h2>
+            </div>
+            <button class="primary-action" id="save-deck">Salva mazzo consigliato</button>
+          </header>
+          <div class="deck-layout">
+            <article class="deck-summary" id="deck-recommendation"></article>
+            <div class="saved-decks" id="saved-decks"></div>
+          </div>
+        </section>
+
+        <section class="view" id="view-settings">
+          <header class="view-header">
+            <div>
+              <p class="eyebrow">Configurazione</p>
+              <h2>Impostazioni</h2>
+            </div>
+            <button class="primary-action" id="save-settings">Salva</button>
+          </header>
+          <form class="settings-form" id="settings-form">
+            <label>
+              Backend OCR
+              <input id="backend-url" placeholder="http://localhost:8787" />
+            </label>
+            <label>
+              Chiave PokeWallet API
+              <input id="pokewallet-key" type="password" autocomplete="off" />
+            </label>
+            <label>
+              Chiave Pokemon TCG API fallback
+              <input id="tcg-key" type="password" autocomplete="off" />
+            </label>
+            <label>
+              Dimensione mazzo
+              <input id="deck-size" type="number" min="40" max="60" value="60" />
+            </label>
+          </form>
+        </section>
+      </main>
+    </div>
+
+    <template id="empty-template">
+      <div class="empty-state">
+        <strong>Nessun dato disponibile</strong>
+        <span>Scansiona una carta per iniziare.</span>
+      </div>
+    </template>
+
+    <script src="app.js" type="module"></script>
+  </body>
+</html>

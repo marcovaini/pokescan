@@ -1,0 +1,25 @@
+export class PokeWalletClient {
+    apiKey;
+    baseUrl;
+    constructor(options) {
+        this.apiKey = options.apiKey;
+        this.baseUrl = options.baseUrl;
+    }
+    async searchByName(name) {
+        if (!this.apiKey.trim()) {
+            throw new Error("PokeWallet API key is required");
+        }
+        const url = new URL("/search", this.baseUrl);
+        url.searchParams.set("q", name.trim());
+        const response = await fetch(url, {
+            headers: {
+                "X-API-Key": this.apiKey.trim(),
+                "Authorization": `Bearer ${this.apiKey.trim()}`
+            }
+        });
+        if (!response.ok) {
+            throw new Error(`PokeWallet API error ${response.status}`);
+        }
+        return response.json();
+    }
+}

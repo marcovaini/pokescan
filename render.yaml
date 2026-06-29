@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: pokemonscan
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: POKEWALLET_API_KEY
+        sync: false
+      - key: POKEMON_TCG_API_KEY
+        sync: false
