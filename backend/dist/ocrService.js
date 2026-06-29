@@ -39,7 +39,7 @@ async function buildRegions(input) {
     const width = metadata.width ?? 0;
     const height = metadata.height ?? 0;
     if (!width || !height) {
-        const fallback = await preprocess(input, { width: 1200, threshold: 150 });
+        const fallback = await preprocess(input, { width: 1800, threshold: 150 });
         return { full: fallback, name: fallback, nameAlt: fallback, number: fallback };
     }
     const nameRegion = {
@@ -61,10 +61,10 @@ async function buildRegions(input) {
         height: Math.max(1, Math.round(height * 0.10))
     };
     const [full, name, nameAlt, number] = await Promise.all([
-        preprocess(await base.clone().toBuffer(), { width: 1400, threshold: 150 }),
-        preprocess(await base.clone().extract(nameRegion).toBuffer(), { width: 1600, threshold: 165 }),
-        preprocess(await base.clone().extract(nameAltRegion).toBuffer(), { width: 1700, threshold: 155 }),
-        preprocess(await base.clone().extract(numberRegion).toBuffer(), { width: 1200, threshold: 175 })
+        preprocess(await base.clone().toBuffer(), { width: 2200, threshold: 148 }),
+        preprocess(await base.clone().extract(nameRegion).toBuffer(), { width: 2600, threshold: 162 }),
+        preprocess(await base.clone().extract(nameAltRegion).toBuffer(), { width: 2800, threshold: 152 }),
+        preprocess(await base.clone().extract(numberRegion).toBuffer(), { width: 2200, threshold: 168 })
     ]);
     return { full, name, nameAlt, number };
 }

@@ -78,11 +78,23 @@ async function startCamera() {
   try {
     stopCamera();
     state.stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 1920 } },
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 2160, max: 4096 },
+        height: { ideal: 3840, max: 4096 },
+        aspectRatio: { ideal: 0.72 }
+      },
       audio: false,
     });
     els.camera.srcObject = state.stream;
-    setStatus("Camera attiva. Inquadra la carta e scatta.");
+    await els.camera.play().catch(() => undefined);
+
+    const track = state.stream.getVideoTracks()[0];
+    const settings = track?.getSettings?.() || {};
+    const width = settings.width || els.camera.videoWidth || "n/d";
+    const height = settings.height || els.camera.videoHeight || "n/d";
+
+    setStatus(`Camera attiva (${width}x${height}). Inquadra la carta e scatta.`);
   } catch (error) {
     setStatus(`Camera non disponibile: ${readError(error)}`);
   }
@@ -149,9 +161,11 @@ function captureFrame() {
 
   canvas.width = region.sw;
   canvas.height = region.sh;
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { alpha: false, willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
   ctx.drawImage(video, region.sx, region.sy, region.sw, region.sh, 0, 0, region.sw, region.sh);
-  return canvas.toDataURL("image/jpeg", 0.95);
+  return canvas.toDataURL("image/png");
 }
 
 function getGuideCaptureRegion(video, guide, sourceWidth, sourceHeight) {
@@ -617,6 +631,7 @@ function escapeHtml(value) {
 function escapeAttr(value) {
   return escapeHtml(value).replace(/'/g, "&#39;");
 }
+
 
 
 
