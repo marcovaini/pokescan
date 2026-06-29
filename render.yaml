@@ -2,7 +2,6 @@ services:
   - type: web
     name: pokemonscan
     runtime: node
-    rootDir: backend
     buildCommand: npm install && npm run build
     startCommand: npm run start
     healthCheckPath: /health

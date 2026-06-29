@@ -1,0 +1,14 @@
+{
+  "name": "pokemonscan",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "npm --prefix backend install && npm --prefix backend run build",
+    "start": "npm --prefix backend run start",
+    "dev": "npm --prefix backend run dev",
+    "typecheck": "npm --prefix backend run typecheck"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}
