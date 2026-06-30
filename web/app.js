@@ -90,11 +90,16 @@ async function startCamera() {
     await els.camera.play().catch(() => undefined);
 
     const track = state.stream.getVideoTracks()[0];
+    state.photoCapture = typeof ImageCapture !== "undefined" ? new ImageCapture(track) : null;
     const settings = track?.getSettings?.() || {};
+    const capabilities = track?.getCapabilities?.() || {};
     const width = settings.width || els.camera.videoWidth || "n/d";
     const height = settings.height || els.camera.videoHeight || "n/d";
+    const maxWidth = capabilities.width?.max || width;
+    const maxHeight = capabilities.height?.max || height;
 
-    setStatus(`Camera attiva (${width}x${height}). Inquadra la carta e scatta.`);
+    state.cameraInfo = `${width}x${height}${maxWidth && maxHeight ? ` (max ${maxWidth}x${maxHeight})` : ""}`;
+    setStatus(`Camera attiva ${state.cameraInfo}. Inquadra la carta e scatta.`);
   } catch (error) {
     setStatus(`Camera non disponibile: ${readError(error)}`);
   }
@@ -113,7 +118,7 @@ async function captureAndRecognize() {
     if (!state.stream) return;
   }
 
-  const imageDataUrl = captureFrame();
+  const imageDataUrl = await captureFrame();
   setStatus("OCR in corso...");
 
   try {
@@ -152,12 +157,45 @@ async function captureAndRecognize() {
   }
 }
 
-function captureFrame() {
+async function captureFrame() {
+  if (state.photoCapture?.takePhoto) {
+    try {
+      const blob = await state.photoCapture.takePhoto();
+      return await cropBlobToGuide(blob);
+    } catch (error) {
+      console.warn("takePhoto failed, falling back to video frame", error);
+    }
+  }
+
+  return captureVideoFrame();
+}
+
+async function cropBlobToGuide(blob) {
+  const bitmap = await createImageBitmap(blob);
+  const canvas = els.canvas;
+  const region = getGuideCaptureRegionForSource(
+    els.camera,
+    els.cameraGuide,
+    bitmap.width,
+    bitmap.height
+  );
+
+  canvas.width = region.sw;
+  canvas.height = region.sh;
+  const ctx = canvas.getContext("2d", { alpha: false, willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(bitmap, region.sx, region.sy, region.sw, region.sh, 0, 0, region.sw, region.sh);
+  if (typeof bitmap.close === "function") bitmap.close();
+  return canvas.toDataURL("image/png");
+}
+
+function captureVideoFrame() {
   const video = els.camera;
   const canvas = els.canvas;
   const videoWidth = video.videoWidth || 900;
   const videoHeight = video.videoHeight || 1200;
-  const region = getGuideCaptureRegion(video, els.cameraGuide, videoWidth, videoHeight);
+  const region = getGuideCaptureRegionForSource(video, els.cameraGuide, videoWidth, videoHeight);
 
   canvas.width = region.sw;
   canvas.height = region.sh;
@@ -168,22 +206,22 @@ function captureFrame() {
   return canvas.toDataURL("image/png");
 }
 
-function getGuideCaptureRegion(video, guide, sourceWidth, sourceHeight) {
+function getGuideCaptureRegionForSource(video, guide, sourceWidth, sourceHeight) {
   if (!guide) {
     return { sx: 0, sy: 0, sw: sourceWidth, sh: sourceHeight };
   }
 
   const videoRect = video.getBoundingClientRect();
   const guideRect = guide.getBoundingClientRect();
-  const scale = Math.max(sourceWidth / videoRect.width, sourceHeight / videoRect.height);
+  const scale = Math.min(sourceWidth / videoRect.width, sourceHeight / videoRect.height);
 
-  const cropWidth = videoRect.width * scale;
-  const cropHeight = videoRect.height * scale;
-  const offsetX = Math.max(0, (cropWidth - sourceWidth) / 2);
-  const offsetY = Math.max(0, (cropHeight - sourceHeight) / 2);
+  const contentWidth = videoRect.width * scale;
+  const contentHeight = videoRect.height * scale;
+  const offsetX = Math.max(0, (sourceWidth - contentWidth) / 2);
+  const offsetY = Math.max(0, (sourceHeight - contentHeight) / 2);
 
-  const left = Math.max(0, (guideRect.left - videoRect.left) * scale - offsetX);
-  const top = Math.max(0, (guideRect.top - videoRect.top) * scale - offsetY);
+  const left = Math.max(0, (guideRect.left - videoRect.left) * scale + offsetX);
+  const top = Math.max(0, (guideRect.top - videoRect.top) * scale + offsetY);
   const width = Math.min(sourceWidth - left, guideRect.width * scale);
   const height = Math.min(sourceHeight - top, guideRect.height * scale);
 
@@ -640,6 +678,7 @@ function escapeHtml(value) {
 function escapeAttr(value) {
   return escapeHtml(value).replace(/'/g, "&#39;");
 }
+
 
 
 
