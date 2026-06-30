@@ -118,30 +118,41 @@ function extractItems(payload) {
     return [];
 }
 function normalizeCard(item, provider) {
-    const set = firstRecord(item.set, item.expansion, item.series) ?? {};
-    const prices = firstRecord(item.prices, item.price, item.market, item.tcgplayer, item.cardmarket) ?? {};
-    const images = firstRecord(item.images, item.image, item.assets) ?? {};
+    const info = firstRecord(item.card_info, item.cardInfo, item.card, item.info) ?? {};
+    const set = firstRecord(item.set, info.set, item.expansion, item.series) ?? {};
+    const prices = firstRecord(item.prices, item.price, item.market, item.tcgplayer, item.cardmarket, info.prices) ?? {};
+    const images = firstRecord(item.images, item.image, item.assets, info.images) ?? {};
+    const pokemonType = firstString(info.card_type, item.card_type, item.cardType, item.energyType, item.energy_type);
+    const types = firstStringArray(info.types, item.types, info.energyTypes, item.energyTypes, item.elements);
+    const stage = firstString(info.stage, item.stage, item.cardStage, item.evolution, item.subtype, item.subType);
     return {
-        id: firstString(item.id, item.cardId, item.uuid, item.slug) ?? `${provider}-${firstString(item.name) ?? "card"}`,
+        id: firstString(item.id, item.cardId, item.uuid, item.slug, info.id) ?? `${provider}-${firstString(item.name, info.name) ?? "card"}`,
         provider,
-        name: firstString(item.name, item.cardName, item.title) ?? "Carta sconosciuta",
-        supertype: firstString(item.supertype, item.type, item.category) ?? "Pokemon",
-        subtypes: firstStringArray(item.subtypes, item.subTypes, item.tags),
-        hp: firstString(item.hp, item.health),
-        types: firstStringArray(item.types, item.energyTypes, item.elements),
-        number: firstString(item.number, item.cardNumber, item.collectorNumber) ?? "n/d",
-        rarity: firstString(item.rarity) ?? "n/d",
-        artist: firstString(item.artist, item.illustrator) ?? "n/d",
+        name: firstString(item.name, item.cardName, item.title, info.name, info.card_name) ?? "Carta sconosciuta",
+        supertype: firstString(item.supertype, info.supertype, item.type, item.category) ?? "Pokemon",
+        stage: stage ?? "",
+        cardType: stage ?? firstString(item.cardType) ?? "",
+        pokemonType: pokemonType ?? "",
+        subtypes: firstStringArray(item.subtypes, item.subTypes, item.tags, info.subtypes, info.tags),
+        hp: firstString(item.hp, item.health, info.hp, info.health),
+        types,
+        number: firstString(item.number, item.cardNumber, item.collectorNumber, info.number, info.card_number) ?? "n/d",
+        rarity: firstString(item.rarity, info.rarity) ?? "n/d",
+        artist: firstString(item.artist, item.illustrator, info.artist, info.illustrator) ?? "n/d",
         set: {
-            id: firstString(set.id, set.code, set.slug),
-            name: firstString(set.name, set.title, item.setName) ?? "Set non riconosciuto"
+            id: firstString(set.id, set.code, set.slug, item.set_id, item.setId, info.set_id, info.setId),
+            name: firstString(set.name, set.title, item.setName, item.set_name, info.set_name, info.setName) ?? "Set non riconosciuto"
         },
         images: {
-            small: firstString(images.small, images.thumbnail, images.url, item.imageUrl, item.image_url),
-            large: firstString(images.large, images.highres, images.url, item.imageUrl, item.image_url)
+            small: firstString(images.small, images.thumbnail, images.url, item.imageUrl, item.image_url, info.imageUrl, info.image_url),
+            large: firstString(images.large, images.highres, images.url, item.imageUrl, item.image_url, info.imageUrl, info.image_url)
         },
         prices: normalizePrices(prices),
-        attacks: Array.isArray(item.attacks) ? item.attacks : [],
+        attacks: Array.isArray(info.attacks) ? info.attacks : Array.isArray(item.attacks) ? item.attacks : [],
+        weakness: firstString(info.weakness, item.weakness),
+        resistance: firstString(info.resistance, item.resistance),
+        retreatCost: firstString(info.retreat_cost, item.retreat_cost, item.retreatCost),
+        description: firstString(info.card_text, item.card_text, item.flavorText, item.description),
         raw: item
     };
 }

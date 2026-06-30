@@ -340,12 +340,16 @@ function createStoredCard({ imageDataUrl, ocr, tcgCard }) {
     setName: tcgCard?.set?.name || ocr.setName || ocr.series || "Set non riconosciuto",
     setCode: tcgCard?.set?.id || tcgCard?.set?.code || ocr.setCode || "",
     number: tcgCard?.number || ocr.cardNumber || "n/d",
-    cardType: ocr.cardType || tcgCard?.supertype || "Pokemon",
+    stage: tcgCard?.stage || ocr.cardType || "",
+    cardType: ocr.cardType || tcgCard?.stage || tcgCard?.supertype || "Pokemon",
     rarity: tcgCard?.rarity || ocr.rarity || "n/d",
     supertype: tcgCard?.supertype || ocr.cardType || "Pokemon",
     subtypes: tcgCard?.subtypes || ocr.subtypes || [],
     hp: tcgCard?.hp ? Number.parseInt(tcgCard.hp, 10) || null : (ocr.hp ? Number.parseInt(ocr.hp, 10) || null : null),
     types: tcgCard?.types || ocr.types || [],
+    pokemonType: ocr.pokemonType || tcgCard?.pokemonType || (Array.isArray(tcgCard?.types) ? tcgCard.types.join(", ") : ""),
+    apiPokemonType: tcgCard?.pokemonType || "",
+    apiStage: tcgCard?.stage || "",
     artist: tcgCard?.artist || ocr.artist || "n/d",
     imageUrl: tcgCard?.images?.large || tcgCard?.images?.small || "",
     localImage: imageDataUrl,
@@ -358,6 +362,8 @@ function createStoredCard({ imageDataUrl, ocr, tcgCard }) {
     ocrSetName: ocr.setName || ocr.series || "",
     ocrSetCode: ocr.setCode || "",
     ocrCardType: ocr.cardType || "",
+    ocrPokemonType: ocr.pokemonType || "",
+    ocrPokemonTypes: ocr.types || [],
     ocrHp: ocr.hp || "",
     ocrAttacks: attacks,
     ocrWeakness: ocr.weakness || "",
@@ -433,11 +439,17 @@ function openDetail(cardId) {
   const card = state.cards.find((item) => item.id === cardId);
   if (!card) return;
   state.selectedCardId = cardId;
-  const attacks = renderAttackList(card.ocrAttacks || card.raw?.attacks || []);
-  const weaknesses = card.ocrWeakness || card.raw?.weaknesses?.[0]?.type || "n/d";
-  const resistance = card.ocrResistance || card.raw?.resistances?.[0]?.type || "n/d";
-  const retreatCost = card.ocrRetreatCost || card.raw?.retreatCost?.join?.(", ") || "n/d";
-  const description = card.ocrDescription || card.raw?.flavorText || card.raw?.description || "n/d";
+  renderDetail(card);
+  showView("detail");
+}
+
+function renderDetail(card) {
+  const attacks = card.ocrAttacks || card.raw?.attacks || [];
+  const weaknesses = card.ocrWeakness || card.raw?.weaknesses?.[0]?.type || "";
+  const resistance = card.ocrResistance || card.raw?.resistances?.[0]?.type || "";
+  const retreatCost = card.ocrRetreatCost || card.raw?.retreatCost?.join?.(", ") || "";
+  const description = card.ocrDescription || card.raw?.flavorText || card.raw?.description || "";
+  const attackEditorValue = serializeAttacks(attacks);
   els.detailContent.innerHTML = `
     <img src="${escapeAttr(card.imageUrl || card.localImage)}" alt="${escapeAttr(card.name)}" />
     <article class="detail-panel">
@@ -445,25 +457,39 @@ function openDetail(cardId) {
       <h2>${escapeHtml(card.name)}</h2>
       <p class="meta">${escapeHtml(card.setName)} - #${escapeHtml(card.number)} - ${escapeHtml(card.rarity)}</p>
       <p class="price">${formatPrice(card.price)}</p>
-      <div class="detail-list">
-        <div><strong>HP</strong>${escapeHtml(card.hp ?? card.ocrHp ?? "n/d")}</div>
-        <div><strong>Tipo carta</strong>${escapeHtml(card.cardType || card.supertype || "n/d")}</div>
-        <div><strong>Debolezza</strong>${escapeHtml(weaknesses)}</div>
-        <div><strong>Resistenza</strong>${escapeHtml(resistance)}</div>
-        <div><strong>Ritirata</strong>${escapeHtml(retreatCost)}</div>
-        <div><strong>Serie</strong>${escapeHtml(card.ocrSeries || card.ocrSetName || card.ocrSetCode || card.setName || "n/d")}</div>
+      <div class="detail-form">
+        <label>Nome carta<input data-edit-field="name" type="text" value="${escapeAttr(card.name)}"></label>
+        <label>Numero carta<input data-edit-field="number" type="text" value="${escapeAttr(card.number || "")}"></label>
+        <label>Serie<input data-edit-field="setName" type="text" value="${escapeAttr(card.ocrSeries || card.ocrSetName || card.setName || "")}"></label>
+        <label>Tipo carta<input data-edit-field="cardType" type="text" value="${escapeAttr(card.cardType || card.supertype || card.stage || "")}"></label>
+        <label>Tipo Pokémon<input data-edit-field="pokemonType" type="text" value="${escapeAttr(card.pokemonType || card.ocrPokemonType || (card.types && card.types.join(", ")) || "")}"></label>
+        <label>Tipo Pokémon<input data-edit-field="pokemonType" type="text" value="${escapeAttr((card.ocrPokemonTypes && card.ocrPokemonTypes.join(", ")) || card.ocrPokemonType || (card.types && card.types.join(", ")) || "")}"></label>
+        <label>HP<input data-edit-field="hp" type="text" value="${escapeAttr(card.hp ?? card.ocrHp ?? "")}"></label>
+        <label>Debolezza<input data-edit-field="weakness" type="text" value="${escapeAttr(weaknesses)}"></label>
+        <label>Resistenza<input data-edit-field="resistance" type="text" value="${escapeAttr(resistance)}"></label>
+        <label>Ritirata<input data-edit-field="retreatCost" type="text" value="${escapeAttr(retreatCost)}"></label>
+        <label>Descrizione<textarea data-edit-field="description">${escapeHtml(description)}</textarea></label>
+        <label>Mosse (una per riga: nome | descrizione)<textarea data-edit-field="attacks">${escapeHtml(attackEditorValue)}</textarea></label>
       </div>
-      <h3>Attacchi</h3>
-      <ul>${attacks}</ul>
-      <h3>Descrizione</h3>
-      <p class="meta">${escapeHtml(description)}</p>
+      <div class="inline-actions">
+        <button id="save-card-edits">Salva modifiche</button>
+        <button class="secondary-action" id="reload-card-detail">Ripristina analisi</button>
+      </div>
+      <h3>Attacchi rilevati</h3>
+      <ul>${renderAttackList(attacks)}</ul>
       <h3>Dati estratti</h3>
       <p class="meta">${escapeHtml(card.scanText || "n/d")}</p>
       <p class="meta">Numero rilevato: ${escapeHtml(card.ocrCardNumber || "n/d")}</p>
       <p class="meta">Serie rilevata: ${escapeHtml(card.ocrSeries || card.ocrSetName || card.ocrSetCode || "n/d")}</p>
     </article>
   `;
-  showView("detail");
+
+  document.querySelector("#save-card-edits").addEventListener("click", async () => {
+    await saveCardEdits(card.id);
+  });
+  document.querySelector("#reload-card-detail").addEventListener("click", () => {
+    renderDetail(state.cards.find((item) => item.id === card.id) || card);
+  });
 }
 
 function renderAttackList(attacks) {
@@ -479,6 +505,65 @@ function renderAttackList(attacks) {
     }
     return `<li><strong>${name || "n/d"}</strong>${description ? ` ${description}` : ""}</li>`;
   }).join("");
+}
+
+function serializeAttacks(attacks) {
+  return normalizeAttacks(attacks)
+    .map((attack) => `${attack.name || ""}${attack.description ? ` | ${attack.description}` : ""}`.trim())
+    .join("\n");
+}
+
+function parseAttackEditor(value) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [namePart, ...rest] = line.split("|");
+      const name = String(namePart || "").trim();
+      const description = String(rest.join("|") || "").trim();
+      return { name, description };
+    })
+    .filter((attack) => attack.name || attack.description);
+}
+
+async function saveCardEdits(cardId) {
+  const index = state.cards.findIndex((item) => item.id === cardId);
+  if (index === -1) return;
+
+  const current = state.cards[index];
+  const read = (field) => document.querySelector(`[data-edit-field="${field}"]`)?.value?.trim() || "";
+  const editedAttacks = parseAttackEditor(read("attacks"));
+  const edited = {
+    ...current,
+    name: read("name") || current.name,
+    number: read("number") || current.number,
+    setName: read("setName") || current.setName,
+    ocrSeries: read("setName") || current.ocrSeries,
+    ocrSetName: read("setName") || current.ocrSetName,
+    stage: read("cardType") || current.stage,
+    cardType: read("cardType") || current.cardType,
+    ocrCardType: read("cardType") || current.ocrCardType,
+    pokemonType: read("pokemonType") || current.pokemonType || current.ocrPokemonType,
+    ocrPokemonType: read("pokemonType") || current.ocrPokemonType,
+    ocrPokemonTypes: read("pokemonType") ? read("pokemonType").split(",").map((value) => value.trim()).filter(Boolean) : current.ocrPokemonTypes,
+    ocrPokemonType: read("pokemonType") || current.ocrPokemonType,
+    ocrPokemonTypes: read("pokemonType") ? read("pokemonType").split(",").map((value) => value.trim()).filter(Boolean) : current.ocrPokemonTypes,
+    hp: read("hp") ? Number.parseInt(read("hp"), 10) || null : current.hp,
+    ocrHp: read("hp") || current.ocrHp,
+    ocrWeakness: read("weakness") || current.ocrWeakness,
+    ocrResistance: read("resistance") || current.ocrResistance,
+    ocrRetreatCost: read("retreatCost") || current.ocrRetreatCost,
+    ocrDescription: read("description") || current.ocrDescription,
+    ocrAttacks: editedAttacks.length ? editedAttacks : current.ocrAttacks,
+  };
+
+  state.cards[index] = edited;
+  await put("cards", edited);
+  await refreshCollections();
+  renderAll();
+  renderDetail(edited);
+  setStatus("Correzioni salvate nell'archivio locale.");
 }
 
 async function deleteCard(cardId) {
@@ -678,6 +763,7 @@ function renderScanResult(card, ocr, tcgCard, tcgError = "") {
     <p>${escapeHtml(card.setName)} - ${escapeHtml(card.rarity)}</p>
     <p>Confidenza AI: <strong>${escapeHtml(ocr.confidence ?? "n/d")}</strong></p>
     <p>Tipo carta: <strong>${escapeHtml(ocr.cardType || "n/d")}</strong></p>
+    <p>Tipo Pokémon: <strong>${escapeHtml((ocr.types && ocr.types.join(", ")) || ocr.pokemonType || "n/d")}</strong></p>
     <p>Numero carta: <strong>${escapeHtml(ocr.cardNumber || "n/d")}</strong></p>
     <p>Serie: <strong>${escapeHtml(ocr.setName || ocr.setCode || "n/d")}</strong></p>
     <p>Candidati: <strong>${escapeHtml(candidates || "n/d")}</strong></p>
@@ -744,6 +830,17 @@ function escapeHtml(value) {
 function escapeAttr(value) {
   return escapeHtml(value).replace(/'/g, "&#39;");
 }
+
+
+
+
+
+
+
+
+
+
+
 
 
 

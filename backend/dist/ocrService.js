@@ -21,6 +21,12 @@ const GEMINI_SCHEMA = {
             nullable: true,
         },
         hp: { type: Type.STRING, description: "HP shown on the card.", nullable: true },
+        pokemon_type: { type: Type.STRING, description: "Pokemon elemental type such as Fire, Grass, Metal, Water, Lightning, Psychic, Fighting, Darkness, Dragon, Colorless.", nullable: true },
+        types: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: "Pokemon elemental types if more than one is visible.",
+        },
         attacks: {
             type: Type.ARRAY,
             items: {
@@ -72,13 +78,14 @@ function buildGeminiPrompt() {
         "Analizza una singola carta Pokemon e restituisci SOLO JSON valido senza markdown.",
         "Devi estrarre esclusivamente i campi necessari per compilare la scheda carta nell'app.",
         "Non inventare nessun dato: se non e leggibile, usa stringa vuota o array vuoto.",
-        "Riconosci: tipo carta (Basic, Stage 1, Stage 2, ex, V, Trainer, Energy), nome Pokemon, HP, azioni, debolezza, resistenza, costo di ritirata, numero carta, serie, nome set, codice set, descrizione del Pokemon.",
+        "Riconosci: tipo carta (Basic, Stage 1, Stage 2, ex, V, Trainer, Energy), tipo Pokemon elementale (Fuoco, Erba, Metallo, Acqua, Lampo, Psico, Lotta, Oscurita, Drago, Incolore), nome Pokemon, HP, azioni, debolezza, resistenza, costo di ritirata, numero carta, serie, nome set, codice set, descrizione del Pokemon.",
         "Per le azioni restituisci un array di oggetti con name e description.",
         "Per tipo carta usa il valore piu vicino a quello stampato sulla carta.",
         "candidate_names deve contenere da 1 a 3 possibili nomi ordinati per fiducia.",
         "confidence deve essere un numero tra 0 e 1.",
         "Se il testo descrittivo del Pokemon non e visibile, lascia description vuota.",
         "Se la carta non e un Pokemon, card_type deve riflettere il tipo corretto e gli altri campi Pokemon possono restare vuoti.",
+        "Se il tipo elementale non e leggibile, lascia pokemon_type vuoto e types come array vuoto.",
     ].join(" ");
 }
 function parseGeminiPayload(rawText) {
@@ -108,6 +115,8 @@ function normalizeGeminiResult(payload, rawText) {
     const confidence = normalizeConfidence(payload.confidence);
     const attacks = normalizeAttacks(payload.attacks);
     const cardType = firstNonEmptyString(payload.card_type) ?? "";
+    const pokemonType = firstNonEmptyString(payload.pokemon_type) ?? "";
+    const types = normalizeStringArray(payload.types);
     const hp = firstNonEmptyString(payload.hp) ?? "";
     const weakness = firstNonEmptyString(payload.weakness) ?? "";
     const resistance = firstNonEmptyString(payload.resistance) ?? "";
@@ -116,6 +125,8 @@ function normalizeGeminiResult(payload, rawText) {
     const summaryLines = [
         pokemonName ? `NAME: ${pokemonName}` : "",
         cardType ? `TYPE: ${cardType}` : "",
+        pokemonType ? `POKEMON_TYPE: ${pokemonType}` : "",
+        types.length ? `POKEMON_TYPES: ${types.join(", ")}` : "",
         hp ? `HP: ${hp}` : "",
         attacks.length ? `ATTACKS: ${attacks.map((attack) => `${attack.name} - ${attack.description}`).join(" | ")}` : "",
         weakness ? `WEAKNESS: ${weakness}` : "",
@@ -137,6 +148,8 @@ function normalizeGeminiResult(payload, rawText) {
         setName,
         setCode,
         cardType,
+        pokemonType,
+        types,
         hp,
         attacks,
         weakness,
