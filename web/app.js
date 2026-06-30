@@ -450,20 +450,31 @@ function renderDetail(card) {
   const retreatCost = card.ocrRetreatCost || card.raw?.retreatCost?.join?.(", ") || "";
   const description = card.ocrDescription || card.raw?.flavorText || card.raw?.description || "";
   const attackEditorValue = serializeAttacks(attacks);
+  const imageUrl = getCardImageUrl(card);
+  const providerPrices = formatProviderPrices(card.prices);
   els.detailContent.innerHTML = `
-    <img src="${escapeAttr(card.imageUrl || card.localImage)}" alt="${escapeAttr(card.name)}" />
+    <img src="${escapeAttr(imageUrl || card.localImage || "")}" alt="${escapeAttr(card.name)}" />
     <article class="detail-panel">
       <p class="eyebrow">${escapeHtml(card.cardType || card.supertype)}</p>
       <h2>${escapeHtml(card.name)}</h2>
       <p class="meta">${escapeHtml(card.setName)} - #${escapeHtml(card.number)} - ${escapeHtml(card.rarity)}</p>
       <p class="price">${formatPrice(card.price)}</p>
+      <div class="detail-summary">
+        ${renderSummaryItem("Set code", card.setCode || card.ocrSetCode || "n/d")}
+        ${renderSummaryItem("Set ID", card.setId || card.raw?.set?.id || "n/d")}
+        ${renderSummaryItem("Rarit?", card.rarity || "n/d")}
+        ${renderSummaryItem("Artista", card.artist || "n/d")}
+        ${renderSummaryItem("Supertype", card.supertype || "n/d")}
+        ${renderSummaryItem("Sottotipi", formatList(card.subtypes))}
+        ${renderSummaryItem("Tipi", formatList(card.types))}
+        ${renderSummaryItem("Prezzi provider", providerPrices)}
+      </div>
       <div class="detail-form">
         <label><span>Nome carta</span><input data-edit-field="name" type="text" value="${escapeAttr(card.name)}"></label>
         <label><span>Numero carta</span><input data-edit-field="number" type="text" value="${escapeAttr(card.number || "")}"></label>
         <label><span>Serie</span><input data-edit-field="setName" type="text" value="${escapeAttr(card.ocrSeries || card.ocrSetName || card.setName || "")}"></label>
         <label><span>Tipo carta</span><input data-edit-field="cardType" type="text" value="${escapeAttr(card.cardType || card.supertype || card.stage || "")}"></label>
-        <label><span>Tipo Pokémon</span><input data-edit-field="pokemonType" type="text" value="${escapeAttr(card.pokemonType || card.ocrPokemonType || (card.types && card.types.join(", ")) || "")}"></label>
-
+        <label><span>Tipo Pok?mon</span><input data-edit-field="pokemonType" type="text" value="${escapeAttr(card.pokemonType || card.ocrPokemonType || (card.types && card.types.join(", ")) || "")}"></label>
         <label><span>HP</span><input data-edit-field="hp" type="text" value="${escapeAttr(card.hp ?? card.ocrHp ?? "")}"></label>
         <label><span>Debolezza</span><input data-edit-field="weakness" type="text" value="${escapeAttr(weaknesses)}"></label>
         <label><span>Resistenza</span><input data-edit-field="resistance" type="text" value="${escapeAttr(resistance)}"></label>
@@ -473,7 +484,8 @@ function renderDetail(card) {
       </div>
       <div class="inline-actions">
         <button id="save-card-edits" type="button">Salva modifiche</button>
-        <button class="secondary-action" id="sync-pokewallet-card" type="button">Aggiorna da PokéWallet</button>
+        <button class="secondary-action" id="sync-pokewallet-card" type="button">Aggiorna da Pok?Wallet</button>
+        <a class="secondary-action" href="${escapeAttr(imageUrl || "#")}" download>Scarica immagine</a>
         <button class="secondary-action" id="reload-card-detail">Ripristina analisi</button>
       </div>
       <h3>Attacchi rilevati</h3>
@@ -606,7 +618,8 @@ async function syncCardFromPokeWallet(cardId) {
 function mergePokeWalletCard(current, providerCard) {
   const attacks = normalizeAttacks(providerCard?.attacks || []);
   const setName = providerCard?.set?.name || providerCard?.setName || current.setName || "";
-  const setCode = providerCard?.set?.id || providerCard?.setCode || current.setCode || "";
+  const setId = providerCard?.set?.id || providerCard?.setId || current.setId || "";
+  const setCode = providerCard?.setCode || current.setCode || providerCard?.raw?.card_info?.set_code || "";
   const number = providerCard?.number || current.number || "n/d";
   const name = providerCard?.name || current.name;
   const pokemonType = providerCard?.pokemonType || (Array.isArray(providerCard?.types) ? providerCard.types.join(", ") : "") || current.pokemonType || current.ocrPokemonType || "";
@@ -614,12 +627,14 @@ function mergePokeWalletCard(current, providerCard) {
   const cardType = providerCard?.cardType || stage || current.cardType || "Pokemon";
   const hp = providerCard?.hp ? Number.parseInt(providerCard.hp, 10) || null : current.hp;
   const price = extractPrice(providerCard) ?? current.price;
-  const imageUrl = providerCard?.images?.large || providerCard?.images?.small || current.imageUrl || "";
+  const pokewalletId = providerCard?.id || current.pokewalletId || providerCard?.raw?.id || "";
+  const imageUrl = providerCard?.images?.large || providerCard?.images?.small || (pokewalletId ? `${normalizeBackendUrl(state.settings.backendUrl)}/cards/${encodeURIComponent(pokewalletId)}/image?size=high` : "") || current.imageUrl || "";
 
   return {
     ...current,
     name,
     setName,
+    setId,
     setCode,
     number,
     stage,
@@ -641,6 +656,8 @@ function mergePokeWalletCard(current, providerCard) {
     ocrResistance: providerCard?.resistance || current.ocrResistance,
     ocrRetreatCost: providerCard?.retreatCost || current.ocrRetreatCost,
     ocrDescription: providerCard?.description || current.ocrDescription,
+    pokewalletId,
+    pokewalletImageUrl: imageUrl,
     pokewalletCard: providerCard,
     updatedAt: Date.now(),
   };
@@ -840,9 +857,15 @@ function renderScanResult(card, ocr, tcgCard, tcgError = "") {
   els.scanResult.innerHTML = `
     <h3>${escapeHtml(card.name)}</h3>
     <p>${escapeHtml(card.setName)} - ${escapeHtml(card.rarity)}</p>
+    <div class="detail-summary detail-summary--compact">
+      ${renderSummaryItem("Set code", card.setCode || "n/d")}
+      ${renderSummaryItem("Rarit?", card.rarity || "n/d")}
+      ${renderSummaryItem("Artista", card.artist || "n/d")}
+      ${renderSummaryItem("Pok?mon type", card.pokemonType || "n/d")}
+    </div>
     <p>Confidenza AI: <strong>${escapeHtml(ocr.confidence ?? "n/d")}</strong></p>
     <p>Tipo carta: <strong>${escapeHtml(ocr.cardType || "n/d")}</strong></p>
-    <p>Tipo Pokémon: <strong>${escapeHtml((ocr.types && ocr.types.join(", ")) || ocr.pokemonType || "n/d")}</strong></p>
+    <p>Tipo Pok?mon: <strong>${escapeHtml((ocr.types && ocr.types.join(", ")) || ocr.pokemonType || "n/d")}</strong></p>
     <p>Numero carta: <strong>${escapeHtml(ocr.cardNumber || "n/d")}</strong></p>
     <p>Serie: <strong>${escapeHtml(ocr.setName || ocr.setCode || "n/d")}</strong></p>
     <p>Candidati: <strong>${escapeHtml(candidates || "n/d")}</strong></p>
@@ -864,6 +887,27 @@ function extractPrice(card) {
 
 function formatPrice(value) {
   return value == null ? "Prezzo n/d" : `EUR ${Number(value).toFixed(2)}`;
+}
+function formatProviderPrices(prices) {
+  if (!prices) return "n/d";
+  const parts = [];
+  if (prices.market != null) parts.push(`market ${Number(prices.market).toFixed(2)}`);
+  if (prices.low != null) parts.push(`low ${Number(prices.low).toFixed(2)}`);
+  if (prices.mid != null) parts.push(`mid ${Number(prices.mid).toFixed(2)}`);
+  if (prices.high != null) parts.push(`high ${Number(prices.high).toFixed(2)}`);
+  return parts.length ? parts.join(" | ") : "n/d";
+}
+function formatList(values) {
+  return Array.isArray(values) && values.length ? values.join(", ") : "n/d";
+}
+function renderSummaryItem(label, value) {
+  return `<div><strong>${escapeHtml(label)}</strong><span>${escapeHtml(value)}</span></div>`;
+}
+function getCardImageUrl(card) {
+  return card?.pokewalletImageUrl || card?.imageUrl || card?.localImage || "";
+}
+function normalizeBackendUrl(value) {
+  return String(value || "").trim().replace(/\/$/, "") || window.location.origin;
 }
 function emptyHtml(title, message) {
   return `<div class="empty-state"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(message)}</span></div>`;

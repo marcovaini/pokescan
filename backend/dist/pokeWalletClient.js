@@ -22,4 +22,21 @@ export class PokeWalletClient {
         }
         return response.json();
     }
+    async getCardImage(cardId, size = "high") {
+        if (!this.apiKey.trim()) {
+            throw new Error("PokeWallet API key is required");
+        }
+        const url = new URL(`/images/${encodeURIComponent(cardId.trim())}`, this.baseUrl);
+        url.searchParams.set("size", size);
+        const response = await fetch(url, {
+            headers: {
+                "X-API-Key": this.apiKey.trim(),
+                "Authorization": `Bearer ${this.apiKey.trim()}`
+            }
+        });
+        if (!response.ok) {
+            throw new Error(`PokeWallet image error ${response.status}`);
+        }
+        return response;
+    }
 }

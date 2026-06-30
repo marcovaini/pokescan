@@ -1,4 +1,4 @@
-﻿import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, extname, join, normalize, resolve } from "node:path";
@@ -37,6 +37,11 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
     } catch (error) {
       sendJson(res, 500, { error: readError(error, "OCR failed") });
     }
+    return;
+  }
+
+  if (req.method === "GET" && req.url?.startsWith("/cards/") && req.url.includes("/image")) {
+    await handleCardImage(req, res);
     return;
   }
 
@@ -91,6 +96,36 @@ async function handleCardSearch(req: IncomingMessage, res: ServerResponse): Prom
   } catch (error) {
     errors.push(readError(error, "Pokemon TCG search failed"));
     sendJson(res, 502, { error: errors.join("; ") });
+  }
+}
+
+async function handleCardImage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+    const match = url.pathname.match(/^\/cards\/([^/]+)\/image$/);
+    const cardId = match?.[1] ? decodeURIComponent(match[1]) : "";
+    const size = url.searchParams.get("size") === "low" ? "low" : "high";
+    const pokeWalletKey = getHeader(req, "x-pokewallet-api-key") ?? process.env.POKEWALLET_API_KEY ?? "";
+
+    if (!cardId.trim()) {
+      sendJson(res, 400, { error: "cardId is required" });
+      return;
+    }
+    if (!pokeWalletKey.trim()) {
+      sendJson(res, 401, { error: "PokeWallet API key is required" });
+      return;
+    }
+
+    const client = new PokeWalletClient({ apiKey: pokeWalletKey, baseUrl: "https://api.pokewallet.io" });
+    const upstream = await client.getCardImage(cardId, size);
+    const bytes = Buffer.from(await upstream.arrayBuffer());
+
+    res.statusCode = 200;
+    res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "image/jpeg");
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.end(bytes);
+  } catch (error) {
+    sendJson(res, 500, { error: readError(error, "PokeWallet image fetch failed") });
   }
 }
 
@@ -154,6 +189,8 @@ function normalizeCard(item: Record<string, unknown>, provider: string): Record<
     number: firstString(item.number, item.cardNumber, item.collectorNumber, info.number, info.card_number) ?? "n/d",
     rarity: firstString(item.rarity, info.rarity) ?? "n/d",
     artist: firstString(item.artist, item.illustrator, info.artist, info.illustrator) ?? "n/d",
+    setId: firstString(set.id, set.code, set.slug, item.set_id, item.setId, info.set_id, info.setId),
+    setCode: firstString(set.code, item.setCode, item.set_code, info.set_code, info.setCode),
     set: {
       id: firstString(set.id, set.code, set.slug, item.set_id, item.setId, info.set_id, info.setId),
       name: firstString(set.name, set.title, item.setName, item.set_name, info.set_name, info.setName) ?? "Set non riconosciuto"
@@ -171,6 +208,7 @@ function normalizeCard(item: Record<string, unknown>, provider: string): Record<
     raw: item
   };
 }
+
 function normalizePrices(prices: Record<string, unknown>): Record<string, unknown> {
   return {
     market: firstNumber(prices.market, prices.marketPrice, prices.avg, prices.average, prices.trendPrice, prices.price),
@@ -267,15 +305,15 @@ function getContentType(filePath: string): string {
   }
 }
 
-function readError(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback;
-}
-
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
-    chunks.push(Buffer.from(chunk));
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
-  const raw = Buffer.concat(chunks).toString("utf8");
-  return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+  const text = Buffer.concat(chunks).toString("utf8");
+  return text.trim() ? JSON.parse(text) : {};
+}
+
+function readError(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
 }
