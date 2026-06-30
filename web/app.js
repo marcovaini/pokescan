@@ -564,6 +564,83 @@ async function saveCardEdits(cardId) {
   setStatus("Correzioni salvate nell'archivio locale.");
 }
 
+async function syncCardFromPokeWallet(cardId) {
+  const index = state.cards.findIndex((item) => item.id === cardId);
+  if (index === -1) return;
+
+  const current = state.cards[index];
+  const hint = {
+    suggestedName: current.name,
+    candidates: [current.name, ...(current.ocrCandidates || [])].filter(Boolean),
+    cardNumber: current.ocrCardNumber || current.number || "",
+    setName: current.ocrSeries || current.ocrSetName || current.setName || "",
+    series: current.ocrSeries || current.ocrSetName || current.setName || "",
+    setCode: current.ocrSetCode || current.setCode || "",
+  };
+
+  setStatus("Interrogazione PokéWallet in corso...");
+  try {
+    const queries = buildSearchQueries(hint);
+    const pokewalletCard = await searchCardCandidates(queries, hint);
+    if (!pokewalletCard) {
+      throw new Error("Nessun match affidabile trovato su PokéWallet");
+    }
+
+    const merged = mergePokeWalletCard(current, pokewalletCard);
+    state.cards[index] = merged;
+    await put("cards", merged);
+    await refreshCollections();
+    renderAll();
+    renderDetail(merged);
+    setStatus(`Scheda aggiornata con PokéWallet: ${pokewalletCard.name}`);
+  } catch (error) {
+    setStatus(`Aggiornamento PokéWallet fallito: ${readError(error)}`);
+    console.error(error);
+  }
+}
+
+function mergePokeWalletCard(current, providerCard) {
+  const attacks = normalizeAttacks(providerCard?.attacks || []);
+  const setName = providerCard?.set?.name || providerCard?.setName || current.setName || "";
+  const setCode = providerCard?.set?.id || providerCard?.setCode || current.setCode || "";
+  const number = providerCard?.number || current.number || "n/d";
+  const name = providerCard?.name || current.name;
+  const pokemonType = providerCard?.pokemonType || (Array.isArray(providerCard?.types) ? providerCard.types.join(", ") : "") || current.pokemonType || current.ocrPokemonType || "";
+  const stage = providerCard?.stage || providerCard?.cardType || current.stage || "";
+  const cardType = providerCard?.cardType || stage || current.cardType || "Pokemon";
+  const hp = providerCard?.hp ? Number.parseInt(providerCard.hp, 10) || null : current.hp;
+  const price = extractPrice(providerCard) ?? current.price;
+  const imageUrl = providerCard?.images?.large || providerCard?.images?.small || current.imageUrl || "";
+
+  return {
+    ...current,
+    name,
+    setName,
+    setCode,
+    number,
+    stage,
+    cardType,
+    pokemonType,
+    types: Array.isArray(providerCard?.types) && providerCard.types.length ? providerCard.types : current.types,
+    hp,
+    rarity: providerCard?.rarity || current.rarity,
+    supertype: providerCard?.supertype || current.supertype,
+    subtypes: Array.isArray(providerCard?.subtypes) && providerCard.subtypes.length ? providerCard.subtypes : current.subtypes,
+    artist: providerCard?.artist || current.artist,
+    imageUrl,
+    price,
+    raw: providerCard?.raw || providerCard,
+    apiPokemonType: pokemonType,
+    apiStage: stage,
+    ocrAttacks: attacks.length ? attacks : current.ocrAttacks,
+    ocrWeakness: providerCard?.weakness || current.ocrWeakness,
+    ocrResistance: providerCard?.resistance || current.ocrResistance,
+    ocrRetreatCost: providerCard?.retreatCost || current.ocrRetreatCost,
+    ocrDescription: providerCard?.description || current.ocrDescription,
+    pokewalletCard: providerCard,
+    updatedAt: Date.now(),
+  };
+}
 async function deleteCard(cardId) {
   await remove("cards", cardId);
   await refreshCollections();
@@ -828,6 +905,7 @@ function escapeHtml(value) {
 function escapeAttr(value) {
   return escapeHtml(value).replace(/'/g, "&#39;");
 }
+
 
 
 
