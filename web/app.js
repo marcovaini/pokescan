@@ -473,6 +473,7 @@ function renderDetail(card) {
       </div>
       <div class="inline-actions">
         <button id="save-card-edits" type="button">Salva modifiche</button>
+        <button class="secondary-action" id="sync-pokewallet-card" type="button">Aggiorna da PokéWallet</button>
         <button class="secondary-action" id="reload-card-detail">Ripristina analisi</button>
       </div>
       <h3>Attacchi rilevati</h3>
@@ -486,6 +487,9 @@ function renderDetail(card) {
 
   els.detailContent.querySelector("#save-card-edits").addEventListener("click", async () => {
     await saveCardEdits(card.id);
+  });
+  els.detailContent.querySelector("#sync-pokewallet-card").addEventListener("click", async () => {
+    await syncCardFromPokeWallet(card.id);
   });
   els.detailContent.querySelector("#reload-card-detail").addEventListener("click", () => {
     renderDetail(state.cards.find((item) => item.id === card.id) || card);
@@ -905,6 +909,7 @@ function escapeHtml(value) {
 function escapeAttr(value) {
   return escapeHtml(value).replace(/'/g, "&#39;");
 }
+
 
 
 
