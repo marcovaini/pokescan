@@ -1,4 +1,4 @@
-const DB_NAME = "PokemonScanWeb";
+﻿const DB_NAME = "PokemonScanWeb";
 const DB_VERSION = 1;
 const DEFAULT_SETTINGS = {
   backendUrl: window.location.origin,
@@ -119,12 +119,12 @@ async function captureAndRecognize() {
   }
 
   const imageDataUrl = await captureFrame();
-  setStatus("OCR in corso...");
+  setStatus("Analisi AI in corso...");
 
   try {
     const ocr = await recognize(imageDataUrl);
     const recognized = ocr.suggestedName || ocr.candidates?.[0] || "nome non sicuro";
-    setStatus(`OCR completato: ${recognized}`);
+    setStatus(`Analisi AI completata: ${recognized}`);
 
     let tcgCard = null;
     let tcgError = "";
@@ -148,7 +148,7 @@ async function captureAndRecognize() {
     if (tcgError) {
       setStatus(`Carta salvata. Dati provider non disponibili: ${tcgError}`);
     } else if (!tcgCard) {
-      setStatus("Carta salvata. OCR completato ma nessun match affidabile trovato.");
+      setStatus("Carta salvata. Analisi AI completata ma nessun match affidabile trovato.");
     } else {
       setStatus("Carta salvata nell'archivio locale.");
     }
@@ -239,7 +239,7 @@ async function recognize(imageDataUrl) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ imageBase64: imageDataUrl }),
   });
-  if (!response.ok) throw new Error(`backend OCR ${response.status}`);
+  if (!response.ok) throw new Error(`backend AI ${response.status}`);
   return response.json();
 }
 
@@ -275,11 +275,19 @@ function buildSearchQueries(ocr) {
     .map((value) => String(value || "").trim())
     .filter((value, index) => value && index < 3);
   const cardNumber = String(ocr.cardNumber || "").trim();
+  const setName = String(ocr.setName || ocr.series || "").trim();
+  const setCode = String(ocr.setCode || "").trim();
   const queries = [];
 
   if (names[0] && cardNumber) queries.push(`${names[0]} ${cardNumber}`);
+  if (names[0] && setName && cardNumber) queries.push(`${names[0]} ${setName} ${cardNumber}`);
+  if (names[0] && setCode && cardNumber) queries.push(`${names[0]} ${setCode} ${cardNumber}`);
+  if (setName && cardNumber) queries.push(`${setName} ${cardNumber}`);
+  if (setCode && cardNumber) queries.push(`${setCode} ${cardNumber}`);
   names.forEach((name) => queries.push(name));
-  if (cardNumber && names[1]) queries.push(`${names[1]} ${cardNumber}`);
+  if (cardNumber) queries.push(cardNumber);
+  if (setName) queries.push(setName);
+  if (setCode) queries.push(setCode);
   return uniqueStrings(queries);
 }
 
@@ -291,19 +299,26 @@ function selectBestCard(cards, ocr) {
     .filter((value, index) => value && index < 3);
   const primaryName = names[0] || "";
   const number = normalizeCardNumber(ocr.cardNumber);
+  const setName = normalizeText(ocr.setName || ocr.series || "");
+  const setCode = normalizeText(ocr.setCode || "");
   let best = null;
   let bestScore = -1;
 
   for (const card of cards) {
     const cardName = normalizeText(card.name);
     const cardNumber = normalizeCardNumber(card.number);
+    const cardSetName = normalizeText(card.set?.name || card.setName || "");
+    const cardSetCode = normalizeText(card.set?.id || card.set?.code || "");
     let score = 0;
 
-    if (primaryName && cardName === primaryName) score += 150;
-    if (primaryName && similarity(cardName, primaryName) >= 0.88) score += 90;
-    if (names.includes(cardName)) score += 50;
-    if (number && cardNumber === number) score += 180;
-    if (number && cardNumber && cardNumber.startsWith(number.split("/")[0] || "")) score += 30;
+    if (primaryName && cardName === primaryName) score += 160;
+    if (primaryName && similarity(cardName, primaryName) >= 0.88) score += 100;
+    if (names.includes(cardName)) score += 60;
+    if (number && cardNumber === number) score += 200;
+    if (number && cardNumber && cardNumber.startsWith(number.split("/")[0] || "")) score += 35;
+    if (setName && cardSetName === setName) score += 90;
+    if (setCode && cardSetCode === setCode) score += 120;
+    if (setName && cardSetName && (cardSetName.includes(setName) || setName.includes(cardSetName))) score += 30;
     if (card.images?.large || card.images?.small) score += 5;
 
     if (score > bestScore) {
@@ -317,18 +332,21 @@ function selectBestCard(cards, ocr) {
 
 function createStoredCard({ imageDataUrl, ocr, tcgCard }) {
   const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+  const attacks = normalizeAttacks(tcgCard?.attacks || ocr.attacks || []);
   return {
     id,
     tcgId: tcgCard?.id || id,
-    name: tcgCard?.name || ocr.suggestedName || ocr.candidates?.[0] || "Carta sconosciuta",
-    setName: tcgCard?.set?.name || "Set non riconosciuto",
+    name: tcgCard?.name || ocr.pokemonName || ocr.suggestedName || ocr.candidates?.[0] || "Carta sconosciuta",
+    setName: tcgCard?.set?.name || ocr.setName || ocr.series || "Set non riconosciuto",
+    setCode: tcgCard?.set?.id || tcgCard?.set?.code || ocr.setCode || "",
     number: tcgCard?.number || ocr.cardNumber || "n/d",
-    rarity: tcgCard?.rarity || "n/d",
-    supertype: tcgCard?.supertype || "Pokemon",
-    subtypes: tcgCard?.subtypes || [],
-    hp: tcgCard?.hp ? Number.parseInt(tcgCard.hp, 10) || null : null,
-    types: tcgCard?.types || [],
-    artist: tcgCard?.artist || "n/d",
+    cardType: ocr.cardType || tcgCard?.supertype || "Pokemon",
+    rarity: tcgCard?.rarity || ocr.rarity || "n/d",
+    supertype: tcgCard?.supertype || ocr.cardType || "Pokemon",
+    subtypes: tcgCard?.subtypes || ocr.subtypes || [],
+    hp: tcgCard?.hp ? Number.parseInt(tcgCard.hp, 10) || null : (ocr.hp ? Number.parseInt(ocr.hp, 10) || null : null),
+    types: tcgCard?.types || ocr.types || [],
+    artist: tcgCard?.artist || ocr.artist || "n/d",
     imageUrl: tcgCard?.images?.large || tcgCard?.images?.small || "",
     localImage: imageDataUrl,
     price: extractPrice(tcgCard),
@@ -336,6 +354,16 @@ function createStoredCard({ imageDataUrl, ocr, tcgCard }) {
     scanText: ocr.rawText || "",
     ocrCandidates: ocr.candidates || [],
     ocrCardNumber: ocr.cardNumber || "",
+    ocrSeries: ocr.series || ocr.setName || "",
+    ocrSetName: ocr.setName || ocr.series || "",
+    ocrSetCode: ocr.setCode || "",
+    ocrCardType: ocr.cardType || "",
+    ocrHp: ocr.hp || "",
+    ocrAttacks: attacks,
+    ocrWeakness: ocr.weakness || "",
+    ocrResistance: ocr.resistance || "",
+    ocrRetreatCost: ocr.retreatCost || "",
+    ocrDescription: ocr.description || "",
     createdAt: Date.now(),
   };
 }
@@ -393,30 +421,52 @@ function openDetail(cardId) {
   const card = state.cards.find((item) => item.id === cardId);
   if (!card) return;
   state.selectedCardId = cardId;
-  const attacks = card.raw?.attacks?.map((attack) => `<li><strong>${escapeHtml(attack.name)}</strong> ${escapeHtml(attack.damage || "")} ${escapeHtml(attack.text || "")}</li>`).join("") || "<li>n/d</li>";
+  const attacks = renderAttackList(card.ocrAttacks || card.raw?.attacks || []);
+  const weaknesses = card.ocrWeakness || card.raw?.weaknesses?.[0]?.type || "n/d";
+  const resistance = card.ocrResistance || card.raw?.resistances?.[0]?.type || "n/d";
+  const retreatCost = card.ocrRetreatCost || card.raw?.retreatCost?.join?.(", ") || "n/d";
+  const description = card.ocrDescription || card.raw?.flavorText || card.raw?.description || "n/d";
   els.detailContent.innerHTML = `
     <img src="${escapeAttr(card.imageUrl || card.localImage)}" alt="${escapeAttr(card.name)}" />
     <article class="detail-panel">
-      <p class="eyebrow">${escapeHtml(card.supertype)}</p>
+      <p class="eyebrow">${escapeHtml(card.cardType || card.supertype)}</p>
       <h2>${escapeHtml(card.name)}</h2>
       <p class="meta">${escapeHtml(card.setName)} - #${escapeHtml(card.number)} - ${escapeHtml(card.rarity)}</p>
       <p class="price">${formatPrice(card.price)}</p>
       <div class="detail-list">
-        <div><strong>HP</strong>${escapeHtml(card.hp ?? "n/d")}</div>
-        <div><strong>Tipi</strong>${escapeHtml(card.types.join(", ") || "n/d")}</div>
-        <div><strong>Sottotipi</strong>${escapeHtml(card.subtypes.join(", ") || "n/d")}</div>
-        <div><strong>Artista</strong>${escapeHtml(card.artist || "n/d")}</div>
+        <div><strong>HP</strong>${escapeHtml(card.hp ?? card.ocrHp ?? "n/d")}</div>
+        <div><strong>Tipo carta</strong>${escapeHtml(card.cardType || card.supertype || "n/d")}</div>
+        <div><strong>Debolezza</strong>${escapeHtml(weaknesses)}</div>
+        <div><strong>Resistenza</strong>${escapeHtml(resistance)}</div>
+        <div><strong>Ritirata</strong>${escapeHtml(retreatCost)}</div>
+        <div><strong>Serie</strong>${escapeHtml(card.ocrSeries || card.ocrSetName || card.ocrSetCode || card.setName || "n/d")}</div>
       </div>
       <h3>Attacchi</h3>
       <ul>${attacks}</ul>
-      <h3>Testo OCR</h3>
+      <h3>Descrizione</h3>
+      <p class="meta">${escapeHtml(description)}</p>
+      <h3>Dati estratti</h3>
       <p class="meta">${escapeHtml(card.scanText || "n/d")}</p>
-      <h3>Candidati OCR</h3>
-      <p class="meta">${escapeHtml((card.ocrCandidates || []).join(", ") || "n/d")}</p>
       <p class="meta">Numero rilevato: ${escapeHtml(card.ocrCardNumber || "n/d")}</p>
+      <p class="meta">Serie rilevata: ${escapeHtml(card.ocrSeries || card.ocrSetName || card.ocrSetCode || "n/d")}</p>
     </article>
   `;
   showView("detail");
+}
+
+function renderAttackList(attacks) {
+  if (!Array.isArray(attacks) || !attacks.length) {
+    return "<li>n/d</li>";
+  }
+
+  return attacks.map((attack) => {
+    const name = escapeHtml(attack?.name || "");
+    const description = escapeHtml(attack?.description || attack?.text || "");
+    if (!name && !description) {
+      return "<li>n/d</li>";
+    }
+    return `<li><strong>${name || "n/d"}</strong>${description ? ` ${description}` : ""}</li>`;
+  }).join("");
 }
 
 async function deleteCard(cardId) {
@@ -610,12 +660,16 @@ function renderScanResult(card, ocr, tcgCard, tcgError = "") {
   els.scanResult.hidden = false;
   const matchText = tcgCard ? "trovato" : tcgError ? `non disponibile (${tcgError})` : "non trovato";
   const candidates = (ocr.candidates || []).slice(0, 3).join(", ");
+  const attackPreview = (ocr.attacks || []).slice(0, 3).map((attack) => attack.name).join(", ");
   els.scanResult.innerHTML = `
     <h3>${escapeHtml(card.name)}</h3>
     <p>${escapeHtml(card.setName)} - ${escapeHtml(card.rarity)}</p>
-    <p>Confidenza OCR: <strong>${escapeHtml(ocr.confidence ?? "n/d")}</strong></p>
-    <p>Numero carta OCR: <strong>${escapeHtml(ocr.cardNumber || "n/d")}</strong></p>
-    <p>Candidati OCR: <strong>${escapeHtml(candidates || "n/d")}</strong></p>
+    <p>Confidenza AI: <strong>${escapeHtml(ocr.confidence ?? "n/d")}</strong></p>
+    <p>Tipo carta: <strong>${escapeHtml(ocr.cardType || "n/d")}</strong></p>
+    <p>Numero carta: <strong>${escapeHtml(ocr.cardNumber || "n/d")}</strong></p>
+    <p>Serie: <strong>${escapeHtml(ocr.setName || ocr.setCode || "n/d")}</strong></p>
+    <p>Candidati: <strong>${escapeHtml(candidates || "n/d")}</strong></p>
+    <p>Mosse: <strong>${escapeHtml(attackPreview || "n/d")}</strong></p>
     <p>Match TCG: <strong>${escapeHtml(matchText)}</strong></p>
     <button class="secondary-action" id="open-last-card">Apri dettaglio</button>
   `;
@@ -678,6 +732,15 @@ function escapeHtml(value) {
 function escapeAttr(value) {
   return escapeHtml(value).replace(/'/g, "&#39;");
 }
+
+
+
+
+
+
+
+
+
 
 
 

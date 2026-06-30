@@ -1,81 +1,86 @@
-import sharp from "sharp";
 import { GoogleGenAI, createPartFromBase64, Type } from "@google/genai";
-import { createWorker, PSM } from "tesseract.js";
 const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY?.trim() ?? "";
 const GEMINI_AI = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
-export class OCRService {
-    async recognizeCard(imageBase64) {
-        if (GEMINI_AI) {
-            try {
-                const gemini = await recognizeWithGemini(imageBase64);
-                if (gemini) {
-                    return gemini;
-                }
-            }
-            catch (error) {
-                const message = error instanceof Error ? error.message : "Gemini failed";
-                console.warn(`Gemini recognition failed: ${message}`);
-            }
-        }
-        return recognizeWithTesseract(imageBase64);
-    }
-}
-async function recognizeWithGemini(imageBase64) {
-    const { data, mimeType } = decodeImageData(imageBase64);
-    if (!data) {
-        return null;
-    }
-    const response = await GEMINI_AI.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: [
-            buildGeminiPrompt(),
-            createPartFromBase64(data, mimeType),
-        ],
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: GEMINI_SCHEMA,
-            temperature: 0,
-            candidateCount: 1,
-        },
-    });
-    const rawText = typeof response.text === "string" ? response.text.trim() : "";
-    const parsed = parseGeminiPayload(rawText);
-    return normalizeGeminiResult(parsed, rawText);
-}
-function buildGeminiPrompt() {
-    return [
-        "Analizza una carta Pokemon e restituisci SOLO JSON valido senza markdown.",
-        "Obiettivo: identificare nome carta, set e collector number.",
-        "Se il numero carta o il set non sono visibili, usa stringa vuota.",
-        "Non inventare dati: se un campo non e leggibile, lascialo vuoto.",
-        "Rispondi con queste chiavi: candidate_names, name, set_name, set_code, collector_number, confidence, hp, types, subtypes, rarity, artist, notes.",
-        "candidate_names deve contenere da 1 a 3 possibili nomi ordinati per fiducia.",
-        "confidence deve essere un numero tra 0 e 1.",
-    ].join(" ");
-}
 const GEMINI_SCHEMA = {
     type: Type.OBJECT,
     properties: {
         candidate_names: {
             type: Type.ARRAY,
             items: { type: Type.STRING },
-            description: "Ordered candidate card names from most likely to least likely.",
+            description: "1 to 3 possible Pokemon names ordered by confidence.",
         },
-        name: { type: Type.STRING, description: "Most likely card name." },
-        set_name: { type: Type.STRING, description: "Card set name if visible." },
-        set_code: { type: Type.STRING, description: "Card set code if visible.", nullable: true },
-        collector_number: { type: Type.STRING, description: "Collector number such as 56/162 or TG12/TG30." },
+        pokemon_name: {
+            type: Type.STRING,
+            description: "Most likely Pokemon name.",
+            nullable: true,
+        },
+        card_type: {
+            type: Type.STRING,
+            description: "Card evolution/type label such as Basic, Stage 1, Stage 2, ex, V, Trainer, Energy.",
+            nullable: true,
+        },
+        hp: { type: Type.STRING, description: "HP shown on the card.", nullable: true },
+        attacks: {
+            type: Type.ARRAY,
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    name: { type: Type.STRING, description: "Attack name." },
+                    description: { type: Type.STRING, description: "Attack effect text and damage." },
+                },
+                required: ["name", "description"],
+            },
+            description: "List of attacks with name and description.",
+        },
+        weakness: { type: Type.STRING, description: "Weakness information if visible.", nullable: true },
+        resistance: { type: Type.STRING, description: "Resistance information if visible.", nullable: true },
+        retreat_cost: { type: Type.STRING, description: "Retreat cost if visible.", nullable: true },
+        card_number: { type: Type.STRING, description: "Collector number such as 56/162 or TG12/TG30.", nullable: true },
+        series: { type: Type.STRING, description: "Expansion or series name if visible.", nullable: true },
+        set_name: { type: Type.STRING, description: "Set name if visible.", nullable: true },
+        set_code: { type: Type.STRING, description: "Set code if visible.", nullable: true },
+        description: { type: Type.STRING, description: "Pokemon flavor text or description if visible.", nullable: true },
         confidence: { type: Type.NUMBER, description: "Recognition confidence from 0 to 1." },
-        hp: { type: Type.STRING, description: "HP value if visible.", nullable: true },
-        types: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Pokemon types." },
-        subtypes: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Subtypes or stage labels." },
-        rarity: { type: Type.STRING, description: "Rarity if visible.", nullable: true },
-        artist: { type: Type.STRING, description: "Illustrator/artist if visible.", nullable: true },
-        notes: { type: Type.STRING, description: "Short notes about unreadable or ambiguous areas.", nullable: true },
+        notes: { type: Type.STRING, description: "Notes about unreadable areas or ambiguity.", nullable: true },
     },
-    required: ["candidate_names", "name", "set_name", "collector_number", "confidence"],
+    required: ["candidate_names", "pokemon_name", "card_type", "card_number", "series", "confidence"],
 };
+export class OCRService {
+    async recognizeCard(imageBase64) {
+        if (!GEMINI_AI) {
+            throw new Error("GEMINI_API_KEY is not configured");
+        }
+        const { data, mimeType } = decodeImageData(imageBase64);
+        const response = await GEMINI_AI.models.generateContent({
+            model: GEMINI_MODEL,
+            contents: [buildGeminiPrompt(), createPartFromBase64(data, mimeType)],
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: GEMINI_SCHEMA,
+                temperature: 0,
+                candidateCount: 1,
+            },
+        });
+        const rawText = typeof response.text === "string" ? response.text.trim() : "";
+        const payload = parseGeminiPayload(rawText);
+        return normalizeGeminiResult(payload, rawText);
+    }
+}
+function buildGeminiPrompt() {
+    return [
+        "Analizza una singola carta Pokemon e restituisci SOLO JSON valido senza markdown.",
+        "Devi estrarre esclusivamente i campi necessari per compilare la scheda carta nell'app.",
+        "Non inventare nessun dato: se non e leggibile, usa stringa vuota o array vuoto.",
+        "Riconosci: tipo carta (Basic, Stage 1, Stage 2, ex, V, Trainer, Energy), nome Pokemon, HP, azioni, debolezza, resistenza, costo di ritirata, numero carta, serie, nome set, codice set, descrizione del Pokemon.",
+        "Per le azioni restituisci un array di oggetti con name e description.",
+        "Per tipo carta usa il valore piu vicino a quello stampato sulla carta.",
+        "candidate_names deve contenere da 1 a 3 possibili nomi ordinati per fiducia.",
+        "confidence deve essere un numero tra 0 e 1.",
+        "Se il testo descrittivo del Pokemon non e visibile, lascia description vuota.",
+        "Se la carta non e un Pokemon, card_type deve riflettere il tipo corretto e gli altri campi Pokemon possono restare vuoti.",
+    ].join(" ");
+}
 function parseGeminiPayload(rawText) {
     const cleaned = rawText
         .replace(/^```json\s*/i, "")
@@ -95,30 +100,73 @@ function extractJsonObject(value) {
 }
 function normalizeGeminiResult(payload, rawText) {
     const candidateNames = normalizeStringArray(payload.candidate_names);
-    const primaryName = firstNonEmptyString(payload.name) ?? candidateNames[0] ?? "";
-    const cardNumber = normalizeCollectorNumber(firstNonEmptyString(payload.collector_number));
-    const confidenceRaw = typeof payload.confidence === "number" ? payload.confidence : Number(payload.confidence);
-    const confidence = Number.isFinite(confidenceRaw)
-        ? Number((confidenceRaw <= 1 ? confidenceRaw * 100 : confidenceRaw).toFixed(2))
-        : 0;
+    const pokemonName = firstNonEmptyString(payload.pokemon_name) ?? candidateNames[0] ?? "";
+    const setName = firstNonEmptyString(payload.set_name) ?? firstNonEmptyString(payload.series) ?? "";
+    const series = firstNonEmptyString(payload.series) ?? setName;
+    const setCode = firstNonEmptyString(payload.set_code) ?? "";
+    const cardNumber = normalizeCollectorNumber(firstNonEmptyString(payload.card_number));
+    const confidence = normalizeConfidence(payload.confidence);
+    const attacks = normalizeAttacks(payload.attacks);
+    const cardType = firstNonEmptyString(payload.card_type) ?? "";
+    const hp = firstNonEmptyString(payload.hp) ?? "";
+    const weakness = firstNonEmptyString(payload.weakness) ?? "";
+    const resistance = firstNonEmptyString(payload.resistance) ?? "";
+    const retreatCost = firstNonEmptyString(payload.retreat_cost) ?? "";
+    const description = firstNonEmptyString(payload.description) ?? "";
     const summaryLines = [
-        primaryName ? `NAME: ${primaryName}` : "",
-        firstNonEmptyString(payload.set_name) ? `SET: ${firstNonEmptyString(payload.set_name)}` : "",
+        pokemonName ? `NAME: ${pokemonName}` : "",
+        cardType ? `TYPE: ${cardType}` : "",
+        hp ? `HP: ${hp}` : "",
+        attacks.length ? `ATTACKS: ${attacks.map((attack) => `${attack.name} - ${attack.description}`).join(" | ")}` : "",
+        weakness ? `WEAKNESS: ${weakness}` : "",
+        resistance ? `RESISTANCE: ${resistance}` : "",
+        retreatCost ? `RETREAT: ${retreatCost}` : "",
         cardNumber ? `NUMBER: ${cardNumber}` : "",
-        firstNonEmptyString(payload.set_code) ? `SET_CODE: ${firstNonEmptyString(payload.set_code)}` : "",
-        firstNonEmptyString(payload.hp) ? `HP: ${firstNonEmptyString(payload.hp)}` : "",
-        normalizeStringArray(payload.types).length ? `TYPES: ${normalizeStringArray(payload.types).join(", ")}` : "",
-        normalizeStringArray(payload.subtypes).length ? `SUBTYPES: ${normalizeStringArray(payload.subtypes).join(", ")}` : "",
-        firstNonEmptyString(payload.rarity) ? `RARITY: ${firstNonEmptyString(payload.rarity)}` : "",
-        firstNonEmptyString(payload.artist) ? `ARTIST: ${firstNonEmptyString(payload.artist)}` : "",
+        setName ? `SERIES: ${setName}` : "",
+        setCode ? `SET_CODE: ${setCode}` : "",
+        description ? `DESCRIPTION: ${description}` : "",
     ].filter(Boolean);
     return {
         rawText: summaryLines.join("\n") || rawText,
-        suggestedName: primaryName,
+        suggestedName: pokemonName,
+        pokemonName,
         confidence,
-        candidates: candidateNames.length ? candidateNames : (primaryName ? [primaryName] : []),
+        candidates: candidateNames.length ? candidateNames : (pokemonName ? [pokemonName] : []),
         cardNumber,
+        series,
+        setName,
+        setCode,
+        cardType,
+        hp,
+        attacks,
+        weakness,
+        resistance,
+        retreatCost,
+        description,
     };
+}
+function normalizeAttacks(value) {
+    if (!Array.isArray(value))
+        return [];
+    return value
+        .map((item) => {
+        if (!isRecord(item))
+            return null;
+        const name = firstNonEmptyString(item.name) ?? "";
+        const description = firstNonEmptyString(item.description) ?? "";
+        if (!name && !description)
+            return null;
+        return { name, description };
+    })
+        .filter((item) => Boolean(item));
+}
+function normalizeConfidence(value) {
+    const raw = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(raw)) {
+        return 0;
+    }
+    const scaled = raw <= 1 ? raw * 100 : raw;
+    return Number(scaled.toFixed(2));
 }
 function normalizeStringArray(value) {
     if (!Array.isArray(value))
@@ -131,6 +179,9 @@ function firstNonEmptyString(value) {
     if (typeof value === "number" && Number.isFinite(value))
         return String(value);
     return null;
+}
+function isRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function normalizeCollectorNumber(value) {
     if (!value)
@@ -147,239 +198,4 @@ function decodeImageData(value) {
         return { mimeType: "image/png", data: payload };
     }
     return { mimeType: "image/png", data: value };
-}
-async function recognizeWithTesseract(imageBase64) {
-    const worker = await createWorker("eng");
-    try {
-        const imageBuffer = decodeImage(imageBase64);
-        const regions = await buildRegions(imageBuffer);
-        const namePass = await recognizeName(worker, regions.name, PSM.SINGLE_LINE);
-        const nameWidePass = await recognizeName(worker, regions.nameWide, PSM.SINGLE_BLOCK);
-        const numberPass = await recognizeNumber(worker, regions.number, PSM.SINGLE_LINE);
-        const numberWidePass = await recognizeNumber(worker, regions.numberWide, PSM.SINGLE_LINE);
-        const candidates = inferCardNames([namePass.text, nameWidePass.text]);
-        const suggestedName = candidates[0] ?? "";
-        const cardNumber = inferCardNumber([numberPass.text, numberWidePass.text]);
-        const confidence = weightedConfidence([
-            { pass: namePass, weight: 0.4 },
-            { pass: nameWidePass, weight: 0.25 },
-            { pass: numberPass, weight: 0.25 },
-            { pass: numberWidePass, weight: 0.1 }
-        ]);
-        const rawText = [
-            suggestedName ? `NAME: ${suggestedName}` : "",
-            cardNumber ? `NUMBER: ${cardNumber}` : "",
-            namePass.text ? `NAME_RAW: ${namePass.text}` : "",
-            nameWidePass.text ? `NAME_WIDE_RAW: ${nameWidePass.text}` : "",
-            numberPass.text ? `NUMBER_RAW: ${numberPass.text}` : "",
-            numberWidePass.text ? `NUMBER_WIDE_RAW: ${numberWidePass.text}` : ""
-        ].filter(Boolean).join("\n");
-        return {
-            rawText,
-            suggestedName,
-            confidence,
-            candidates,
-            cardNumber
-        };
-    }
-    finally {
-        await worker.terminate();
-    }
-}
-async function buildRegions(input) {
-    const base = sharp(input).rotate();
-    const metadata = await base.metadata();
-    const width = metadata.width ?? 0;
-    const height = metadata.height ?? 0;
-    if (!width || !height) {
-        const fallback = await preprocess(input, { width: 2400, threshold: 156 });
-        return {
-            name: fallback,
-            nameWide: fallback,
-            number: fallback,
-            numberWide: fallback
-        };
-    }
-    const name = {
-        left: Math.max(0, Math.round(width * 0.10)),
-        top: Math.max(0, Math.round(height * 0.045)),
-        width: Math.max(1, Math.round(width * 0.60)),
-        height: Math.max(1, Math.round(height * 0.09))
-    };
-    const nameWide = {
-        left: Math.max(0, Math.round(width * 0.07)),
-        top: Math.max(0, Math.round(height * 0.035)),
-        width: Math.max(1, Math.round(width * 0.72)),
-        height: Math.max(1, Math.round(height * 0.12))
-    };
-    const number = {
-        left: Math.max(0, Math.round(width * 0.10)),
-        top: Math.max(0, Math.round(height * 0.885)),
-        width: Math.max(1, Math.round(width * 0.34)),
-        height: Math.max(1, Math.round(height * 0.055))
-    };
-    const numberWide = {
-        left: Math.max(0, Math.round(width * 0.08)),
-        top: Math.max(0, Math.round(height * 0.86)),
-        width: Math.max(1, Math.round(width * 0.52)),
-        height: Math.max(1, Math.round(height * 0.09))
-    };
-    const [nameBuffer, nameWideBuffer, numberBuffer, numberWideBuffer] = await Promise.all([
-        preprocess(await base.clone().extract(name).toBuffer(), { width: 3200, threshold: 160 }),
-        preprocess(await base.clone().extract(nameWide).toBuffer(), { width: 3400, threshold: 154 }),
-        preprocess(await base.clone().extract(number).toBuffer(), { width: 2600, threshold: 172 }),
-        preprocess(await base.clone().extract(numberWide).toBuffer(), { width: 2800, threshold: 168 })
-    ]);
-    return {
-        name: nameBuffer,
-        nameWide: nameWideBuffer,
-        number: numberBuffer,
-        numberWide: numberWideBuffer
-    };
-}
-async function preprocess(input, options) {
-    return sharp(input)
-        .grayscale()
-        .normalize()
-        .modulate({ brightness: 1.08, saturation: 0 })
-        .sharpen({ sigma: 1.2 })
-        .resize({ width: options.width, withoutEnlargement: false })
-        .threshold(options.threshold)
-        .png()
-        .toBuffer();
-}
-async function recognizeName(worker, input, psm) {
-    await worker.setParameters({
-        tessedit_pageseg_mode: psm,
-        preserve_interword_spaces: "1",
-        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-' "
-    });
-    const { data } = await worker.recognize(input);
-    return {
-        text: sanitizeNameText(data.text ?? ""),
-        confidence: Number((data.confidence ?? 0).toFixed(2))
-    };
-}
-async function recognizeNumber(worker, input, psm) {
-    await worker.setParameters({
-        tessedit_pageseg_mode: psm,
-        preserve_interword_spaces: "0",
-        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/"
-    });
-    const { data } = await worker.recognize(input);
-    return {
-        text: sanitizeNumberText(data.text ?? ""),
-        confidence: Number((data.confidence ?? 0).toFixed(2))
-    };
-}
-function decodeImage(value) {
-    if (value.startsWith("data:image")) {
-        const [, payload = ""] = value.split(",", 2);
-        return Buffer.from(payload, "base64");
-    }
-    return Buffer.from(value, "base64");
-}
-function sanitizeNameText(text) {
-    return text
-        .replace(/[|]/g, "I")
-        .replace(/[��]/g, '"')
-        .replace(/[��]/g, "'")
-        .replace(/\b(?:BASIC|STAGE ?1|STAGE ?2|TRAINER|ENERGY|HP)\b/gi, " ")
-        .replace(/[^A-Za-z0-9.' -]+/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-}
-function sanitizeNumberText(text) {
-    return text
-        .replace(/[^A-Za-z0-9/]+/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-}
-function inferCardNames(texts) {
-    const ranked = new Map();
-    for (const text of texts) {
-        const lines = text
-            .split(/\r?\n/)
-            .flatMap((line) => splitNameCandidates(line))
-            .map(normalizeCandidate)
-            .filter((candidate) => candidate && !isLikelyNoise(candidate));
-        for (const candidate of lines) {
-            const score = scoreCandidate(candidate);
-            const current = ranked.get(candidate) ?? 0;
-            if (score > current) {
-                ranked.set(candidate, score);
-            }
-        }
-    }
-    return [...ranked.entries()]
-        .sort((a, b) => b[1] - a[1] || a[0].length - b[0].length)
-        .map(([candidate]) => candidate)
-        .slice(0, 5);
-}
-function splitNameCandidates(line) {
-    const clean = sanitizeNameText(line);
-    if (!clean) {
-        return [];
-    }
-    return [clean]
-        .concat(clean.split(/\s{2,}/g))
-        .concat(clean.split(/(?<=\D)(?=\d)|(?<=\d)(?=\D)/g).length > 3 ? [] : []);
-}
-function normalizeCandidate(line) {
-    return line
-        .replace(/\b(?:Pokemon|Pok mon)\b/gi, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-}
-function isLikelyNoise(candidate) {
-    if (candidate.length < 3 || candidate.length > 24) {
-        return true;
-    }
-    const words = candidate.split(" ").filter(Boolean);
-    if (!words.length || words.length > 3) {
-        return true;
-    }
-    const letters = (candidate.match(/[A-Za-z]/g) ?? []).length;
-    const digits = (candidate.match(/[0-9]/g) ?? []).length;
-    if (letters < 3 || digits > 2) {
-        return true;
-    }
-    return /(weakness|resistance|retreat|damage|coin|attack|discard)/i.test(candidate);
-}
-function scoreCandidate(candidate) {
-    let score = 0;
-    const words = candidate.split(" ").filter(Boolean);
-    const letters = (candidate.match(/[A-Za-z]/g) ?? []).length;
-    score += Math.min(letters, 18) * 3;
-    score += Math.max(0, 18 - Math.abs(candidate.length - 10));
-    score += words.length === 1 ? 14 : 8;
-    if (/^[A-Z][A-Za-z0-9.'-]+(?: [A-Z][A-Za-z0-9.'-]+){0,1}$/.test(candidate)) {
-        score += 20;
-    }
-    if (/ex|gx|v|vstar|vmax|radiant|prime|break/i.test(candidate)) {
-        score += 6;
-    }
-    return score;
-}
-function inferCardNumber(texts) {
-    for (const text of texts) {
-        const compact = text.replace(/\s+/g, "");
-        const exact = compact.match(/\b([A-Z]{0,3}\d{1,3})\/([A-Z]{0,3}\d{1,3})\b/i);
-        if (exact) {
-            return `${exact[1].toUpperCase()}/${exact[2].toUpperCase()}`;
-        }
-        const loose = compact.match(/\b([A-Z]{0,3}\d{1,3})[Il]?\/([A-Z]{0,3}\d{1,3})\b/i);
-        if (loose) {
-            return `${loose[1].toUpperCase()}/${loose[2].toUpperCase()}`;
-        }
-    }
-    return "";
-}
-function weightedConfidence(entries) {
-    const totalWeight = entries.reduce((sum, entry) => sum + entry.weight, 0);
-    if (!totalWeight) {
-        return 0;
-    }
-    const total = entries.reduce((sum, entry) => sum + (Number.isFinite(entry.pass.confidence) ? entry.pass.confidence * entry.weight : 0), 0);
-    return Number((total / totalWeight).toFixed(2));
 }

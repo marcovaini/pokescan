@@ -12,7 +12,7 @@ Webapp responsiva per:
 
 - Web app vanilla HTML/CSS/JavaScript in `web/`
 - Backend Node/TypeScript in `backend/`
-- Riconoscimento carta via Gemini con fallback Tesseract esposto da `POST /ocr`
+- Riconoscimento carta via Gemini esposto da `POST /ocr`
 - Ricerca carte via `GET /cards/search?name=...`
 - PokeWallet API primaria, Pokemon TCG API fallback
 - Archivio locale browser con IndexedDB
@@ -36,9 +36,9 @@ Il repository include [render.yaml](C:\Sviluppo\WORKSPACE_AI\CODEX_APP\_PERSONAL
 Variabili ambiente richieste:
 
 - `GEMINI_API_KEY`
+- `GEMINI_MODEL` opzionale, default `gemini-2.5-flash`
 - `POKEWALLET_API_KEY`
 - `POKEMON_TCG_API_KEY` opzionale
-- `GEMINI_MODEL` opzionale, default `gemini-2.5-flash`
 - `PORT` viene gestita da Render automaticamente
 
 Comandi usati da Render:
