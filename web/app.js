@@ -368,6 +368,18 @@ function createStoredCard({ imageDataUrl, ocr, tcgCard }) {
   };
 }
 
+function normalizeAttacks(attacks) {
+  if (!Array.isArray(attacks)) return [];
+  return attacks
+    .map((attack) => {
+      const name = String(attack?.name || attack?.attack || "").trim();
+      const description = String(attack?.description || attack?.text || attack?.effect || "").trim();
+      if (!name && !description) return null;
+      return { name, description };
+    })
+    .filter(Boolean);
+}
+
 function renderAll() {
   renderCounters();
   renderSettings();
@@ -732,6 +744,7 @@ function escapeHtml(value) {
 function escapeAttr(value) {
   return escapeHtml(value).replace(/'/g, "&#39;");
 }
+
 
 
 
