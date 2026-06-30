@@ -472,7 +472,7 @@ function renderDetail(card) {
         <label class="field-wide"><span>Mosse (una per riga: nome | descrizione)</span><textarea data-edit-field="attacks">${escapeHtml(attackEditorValue)}</textarea></label>
       </div>
       <div class="inline-actions">
-        <button id="save-card-edits">Salva modifiche</button>
+        <button id="save-card-edits" type="button">Salva modifiche</button>
         <button class="secondary-action" id="reload-card-detail">Ripristina analisi</button>
       </div>
       <h3>Attacchi rilevati</h3>
@@ -484,10 +484,10 @@ function renderDetail(card) {
     </article>
   `;
 
-  document.querySelector("#save-card-edits").addEventListener("click", async () => {
+  els.detailContent.querySelector("#save-card-edits").addEventListener("click", async () => {
     await saveCardEdits(card.id);
   });
-  document.querySelector("#reload-card-detail").addEventListener("click", () => {
+  els.detailContent.querySelector("#reload-card-detail").addEventListener("click", () => {
     renderDetail(state.cards.find((item) => item.id === card.id) || card);
   });
 }
@@ -532,7 +532,7 @@ async function saveCardEdits(cardId) {
   if (index === -1) return;
 
   const current = state.cards[index];
-  const read = (field) => document.querySelector(`[data-edit-field="${field}"]`)?.value?.trim() || "";
+  const read = (field) => els.detailContent.querySelector(`[data-edit-field="${field}"]`)?.value?.trim() || "";
   const editedAttacks = parseAttackEditor(read("attacks"));
   const edited = {
     ...current,
@@ -828,5 +828,7 @@ function escapeHtml(value) {
 function escapeAttr(value) {
   return escapeHtml(value).replace(/'/g, "&#39;");
 }
+
+
 
 
