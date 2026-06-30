@@ -458,18 +458,18 @@ function renderDetail(card) {
       <p class="meta">${escapeHtml(card.setName)} - #${escapeHtml(card.number)} - ${escapeHtml(card.rarity)}</p>
       <p class="price">${formatPrice(card.price)}</p>
       <div class="detail-form">
-        <label>Nome carta<input data-edit-field="name" type="text" value="${escapeAttr(card.name)}"></label>
-        <label>Numero carta<input data-edit-field="number" type="text" value="${escapeAttr(card.number || "")}"></label>
-        <label>Serie<input data-edit-field="setName" type="text" value="${escapeAttr(card.ocrSeries || card.ocrSetName || card.setName || "")}"></label>
-        <label>Tipo carta<input data-edit-field="cardType" type="text" value="${escapeAttr(card.cardType || card.supertype || card.stage || "")}"></label>
-        <label>Tipo Pokémon<input data-edit-field="pokemonType" type="text" value="${escapeAttr(card.pokemonType || card.ocrPokemonType || (card.types && card.types.join(", ")) || "")}"></label>
-        <label>Tipo Pokémon<input data-edit-field="pokemonType" type="text" value="${escapeAttr((card.ocrPokemonTypes && card.ocrPokemonTypes.join(", ")) || card.ocrPokemonType || (card.types && card.types.join(", ")) || "")}"></label>
-        <label>HP<input data-edit-field="hp" type="text" value="${escapeAttr(card.hp ?? card.ocrHp ?? "")}"></label>
-        <label>Debolezza<input data-edit-field="weakness" type="text" value="${escapeAttr(weaknesses)}"></label>
-        <label>Resistenza<input data-edit-field="resistance" type="text" value="${escapeAttr(resistance)}"></label>
-        <label>Ritirata<input data-edit-field="retreatCost" type="text" value="${escapeAttr(retreatCost)}"></label>
-        <label>Descrizione<textarea data-edit-field="description">${escapeHtml(description)}</textarea></label>
-        <label>Mosse (una per riga: nome | descrizione)<textarea data-edit-field="attacks">${escapeHtml(attackEditorValue)}</textarea></label>
+        <label><span>Nome carta</span><input data-edit-field="name" type="text" value="${escapeAttr(card.name)}"></label>
+        <label><span>Numero carta</span><input data-edit-field="number" type="text" value="${escapeAttr(card.number || "")}"></label>
+        <label><span>Serie</span><input data-edit-field="setName" type="text" value="${escapeAttr(card.ocrSeries || card.ocrSetName || card.setName || "")}"></label>
+        <label><span>Tipo carta</span><input data-edit-field="cardType" type="text" value="${escapeAttr(card.cardType || card.supertype || card.stage || "")}"></label>
+        <label><span>Tipo Pokémon</span><input data-edit-field="pokemonType" type="text" value="${escapeAttr(card.pokemonType || card.ocrPokemonType || (card.types && card.types.join(", ")) || "")}"></label>
+
+        <label><span>HP</span><input data-edit-field="hp" type="text" value="${escapeAttr(card.hp ?? card.ocrHp ?? "")}"></label>
+        <label><span>Debolezza</span><input data-edit-field="weakness" type="text" value="${escapeAttr(weaknesses)}"></label>
+        <label><span>Resistenza</span><input data-edit-field="resistance" type="text" value="${escapeAttr(resistance)}"></label>
+        <label><span>Ritirata</span><input data-edit-field="retreatCost" type="text" value="${escapeAttr(retreatCost)}"></label>
+        <label class="field-wide"><span>Descrizione</span><textarea data-edit-field="description">${escapeHtml(description)}</textarea></label>
+        <label class="field-wide"><span>Mosse (una per riga: nome | descrizione)</span><textarea data-edit-field="attacks">${escapeHtml(attackEditorValue)}</textarea></label>
       </div>
       <div class="inline-actions">
         <button id="save-card-edits">Salva modifiche</button>
@@ -545,8 +545,6 @@ async function saveCardEdits(cardId) {
     cardType: read("cardType") || current.cardType,
     ocrCardType: read("cardType") || current.ocrCardType,
     pokemonType: read("pokemonType") || current.pokemonType || current.ocrPokemonType,
-    ocrPokemonType: read("pokemonType") || current.ocrPokemonType,
-    ocrPokemonTypes: read("pokemonType") ? read("pokemonType").split(",").map((value) => value.trim()).filter(Boolean) : current.ocrPokemonTypes,
     ocrPokemonType: read("pokemonType") || current.ocrPokemonType,
     ocrPokemonTypes: read("pokemonType") ? read("pokemonType").split(",").map((value) => value.trim()).filter(Boolean) : current.ocrPokemonTypes,
     hp: read("hp") ? Number.parseInt(read("hp"), 10) || null : current.hp,
@@ -830,31 +828,4 @@ function escapeHtml(value) {
 function escapeAttr(value) {
   return escapeHtml(value).replace(/'/g, "&#39;");
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
