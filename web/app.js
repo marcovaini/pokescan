@@ -339,7 +339,7 @@ function createStoredCard({ imageDataUrl, ocr, tcgCard }) {
     name: tcgCard?.name || ocr.pokemonName || ocr.suggestedName || ocr.candidates?.[0] || "Carta sconosciuta",
     setName: tcgCard?.set?.name || ocr.setName || ocr.series || "Set non riconosciuto",
     setCode: tcgCard?.set?.id || tcgCard?.set?.code || ocr.setCode || "",
-    number: tcgCard?.number || ocr.cardNumber || "n/d",
+    number: ocr.cardNumber || tcgCard?.number || "n/d",
     stage: tcgCard?.stage || ocr.cardType || "",
     cardType: ocr.cardType || tcgCard?.stage || tcgCard?.supertype || "Pokemon",
     rarity: tcgCard?.rarity || ocr.rarity || "n/d",
@@ -828,4 +828,5 @@ function escapeHtml(value) {
 function escapeAttr(value) {
   return escapeHtml(value).replace(/'/g, "&#39;");
 }
+
 
