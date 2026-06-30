@@ -1,5 +1,10 @@
 import sharp from "sharp";
+import { GoogleGenAI, createPartFromBase64, Type } from "@google/genai";
 import { createWorker, PSM } from "tesseract.js";
+
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY?.trim() ?? "";
+const GEMINI_AI = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 
 export type OCRResult = {
   rawText: string;
@@ -23,45 +28,214 @@ type OCRRegions = {
 
 export class OCRService {
   async recognizeCard(imageBase64: string): Promise<OCRResult> {
-    const worker = await createWorker("eng");
-
-    try {
-      const imageBuffer = decodeImage(imageBase64);
-      const regions = await buildRegions(imageBuffer);
-
-      const namePass = await recognizeName(worker, regions.name, PSM.SINGLE_LINE);
-      const nameWidePass = await recognizeName(worker, regions.nameWide, PSM.SINGLE_BLOCK);
-      const numberPass = await recognizeNumber(worker, regions.number, PSM.SINGLE_LINE);
-      const numberWidePass = await recognizeNumber(worker, regions.numberWide, PSM.SINGLE_LINE);
-
-      const candidates = inferCardNames([namePass.text, nameWidePass.text]);
-      const suggestedName = candidates[0] ?? "";
-      const cardNumber = inferCardNumber([numberPass.text, numberWidePass.text]);
-      const confidence = weightedConfidence([
-        { pass: namePass, weight: 0.4 },
-        { pass: nameWidePass, weight: 0.25 },
-        { pass: numberPass, weight: 0.25 },
-        { pass: numberWidePass, weight: 0.1 }
-      ]);
-      const rawText = [
-        suggestedName ? `NAME: ${suggestedName}` : "",
-        cardNumber ? `NUMBER: ${cardNumber}` : "",
-        namePass.text ? `NAME_RAW: ${namePass.text}` : "",
-        nameWidePass.text ? `NAME_WIDE_RAW: ${nameWidePass.text}` : "",
-        numberPass.text ? `NUMBER_RAW: ${numberPass.text}` : "",
-        numberWidePass.text ? `NUMBER_WIDE_RAW: ${numberWidePass.text}` : ""
-      ].filter(Boolean).join("\n");
-
-      return {
-        rawText,
-        suggestedName,
-        confidence,
-        candidates,
-        cardNumber
-      };
-    } finally {
-      await worker.terminate();
+    if (GEMINI_AI) {
+      try {
+        const gemini = await recognizeWithGemini(imageBase64);
+        if (gemini) {
+          return gemini;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Gemini failed";
+        console.warn(`Gemini recognition failed: ${message}`);
+      }
     }
+
+    return recognizeWithTesseract(imageBase64);
+  }
+}
+
+async function recognizeWithGemini(imageBase64: string): Promise<OCRResult | null> {
+  const { data, mimeType } = decodeImageData(imageBase64);
+  if (!data) {
+    return null;
+  }
+
+  const response = await GEMINI_AI!.models.generateContent({
+    model: GEMINI_MODEL,
+    contents: [
+      buildGeminiPrompt(),
+      createPartFromBase64(data, mimeType),
+    ],
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: GEMINI_SCHEMA,
+      temperature: 0,
+      candidateCount: 1,
+    },
+  });
+
+  const rawText = typeof response.text === "string" ? response.text.trim() : "";
+  const parsed = parseGeminiPayload(rawText);
+  return normalizeGeminiResult(parsed, rawText);
+}
+
+function buildGeminiPrompt(): string {
+  return [
+    "Analizza una carta Pokemon e restituisci SOLO JSON valido senza markdown.",
+    "Obiettivo: identificare nome carta, set e collector number.",
+    "Se il numero carta o il set non sono visibili, usa stringa vuota.",
+    "Non inventare dati: se un campo non e leggibile, lascialo vuoto.",
+    "Rispondi con queste chiavi: candidate_names, name, set_name, set_code, collector_number, confidence, hp, types, subtypes, rarity, artist, notes.",
+    "candidate_names deve contenere da 1 a 3 possibili nomi ordinati per fiducia.",
+    "confidence deve essere un numero tra 0 e 1.",
+  ].join(" ");
+}
+
+type GeminiPayload = {
+  candidate_names?: unknown;
+  name?: unknown;
+  set_name?: unknown;
+  set_code?: unknown;
+  collector_number?: unknown;
+  confidence?: unknown;
+  hp?: unknown;
+  types?: unknown;
+  subtypes?: unknown;
+  rarity?: unknown;
+  artist?: unknown;
+  notes?: unknown;
+};
+
+const GEMINI_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    candidate_names: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: "Ordered candidate card names from most likely to least likely.",
+    },
+    name: { type: Type.STRING, description: "Most likely card name." },
+    set_name: { type: Type.STRING, description: "Card set name if visible." },
+    set_code: { type: Type.STRING, description: "Card set code if visible.", nullable: true },
+    collector_number: { type: Type.STRING, description: "Collector number such as 56/162 or TG12/TG30." },
+    confidence: { type: Type.NUMBER, description: "Recognition confidence from 0 to 1." },
+    hp: { type: Type.STRING, description: "HP value if visible.", nullable: true },
+    types: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Pokemon types." },
+    subtypes: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Subtypes or stage labels." },
+    rarity: { type: Type.STRING, description: "Rarity if visible.", nullable: true },
+    artist: { type: Type.STRING, description: "Illustrator/artist if visible.", nullable: true },
+    notes: { type: Type.STRING, description: "Short notes about unreadable or ambiguous areas.", nullable: true },
+  },
+  required: ["candidate_names", "name", "set_name", "collector_number", "confidence"],
+} as const;
+
+function parseGeminiPayload(rawText: string): GeminiPayload {
+  const cleaned = rawText
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+
+  const jsonText = extractJsonObject(cleaned);
+  return JSON.parse(jsonText) as GeminiPayload;
+}
+
+function extractJsonObject(value: string): string {
+  const start = value.indexOf("{");
+  const end = value.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("Gemini response did not contain JSON");
+  }
+  return value.slice(start, end + 1);
+}
+
+function normalizeGeminiResult(payload: GeminiPayload, rawText: string): OCRResult {
+  const candidateNames = normalizeStringArray(payload.candidate_names);
+  const primaryName = firstNonEmptyString(payload.name) ?? candidateNames[0] ?? "";
+  const cardNumber = normalizeCollectorNumber(firstNonEmptyString(payload.collector_number));
+  const confidenceRaw = typeof payload.confidence === "number" ? payload.confidence : Number(payload.confidence);
+  const confidence = Number.isFinite(confidenceRaw)
+    ? Number((confidenceRaw <= 1 ? confidenceRaw * 100 : confidenceRaw).toFixed(2))
+    : 0;
+
+  const summaryLines = [
+    primaryName ? `NAME: ${primaryName}` : "",
+    firstNonEmptyString(payload.set_name) ? `SET: ${firstNonEmptyString(payload.set_name)}` : "",
+    cardNumber ? `NUMBER: ${cardNumber}` : "",
+    firstNonEmptyString(payload.set_code) ? `SET_CODE: ${firstNonEmptyString(payload.set_code)}` : "",
+    firstNonEmptyString(payload.hp) ? `HP: ${firstNonEmptyString(payload.hp)}` : "",
+    normalizeStringArray(payload.types).length ? `TYPES: ${normalizeStringArray(payload.types).join(", ")}` : "",
+    normalizeStringArray(payload.subtypes).length ? `SUBTYPES: ${normalizeStringArray(payload.subtypes).join(", ")}` : "",
+    firstNonEmptyString(payload.rarity) ? `RARITY: ${firstNonEmptyString(payload.rarity)}` : "",
+    firstNonEmptyString(payload.artist) ? `ARTIST: ${firstNonEmptyString(payload.artist)}` : "",
+  ].filter(Boolean);
+
+  return {
+    rawText: summaryLines.join("\n") || rawText,
+    suggestedName: primaryName,
+    confidence,
+    candidates: candidateNames.length ? candidateNames : (primaryName ? [primaryName] : []),
+    cardNumber,
+  };
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => firstNonEmptyString(item) ?? "").filter(Boolean);
+}
+
+function firstNonEmptyString(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
+}
+
+function normalizeCollectorNumber(value: string | null): string {
+  if (!value) return "";
+  return value.replace(/\s+/g, "").toUpperCase().replace(/[^A-Z0-9/]+/g, "");
+}
+
+function decodeImageData(value: string): { data: string; mimeType: string } {
+  if (value.startsWith("data:image")) {
+    const match = value.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/s);
+    if (match) {
+      return { mimeType: match[1], data: match[2] };
+    }
+    const [, payload = ""] = value.split(",", 2);
+    return { mimeType: "image/png", data: payload };
+  }
+  return { mimeType: "image/png", data: value };
+}
+
+async function recognizeWithTesseract(imageBase64: string): Promise<OCRResult> {
+  const worker = await createWorker("eng");
+
+  try {
+    const imageBuffer = decodeImage(imageBase64);
+    const regions = await buildRegions(imageBuffer);
+
+    const namePass = await recognizeName(worker, regions.name, PSM.SINGLE_LINE);
+    const nameWidePass = await recognizeName(worker, regions.nameWide, PSM.SINGLE_BLOCK);
+    const numberPass = await recognizeNumber(worker, regions.number, PSM.SINGLE_LINE);
+    const numberWidePass = await recognizeNumber(worker, regions.numberWide, PSM.SINGLE_LINE);
+
+    const candidates = inferCardNames([namePass.text, nameWidePass.text]);
+    const suggestedName = candidates[0] ?? "";
+    const cardNumber = inferCardNumber([numberPass.text, numberWidePass.text]);
+    const confidence = weightedConfidence([
+      { pass: namePass, weight: 0.4 },
+      { pass: nameWidePass, weight: 0.25 },
+      { pass: numberPass, weight: 0.25 },
+      { pass: numberWidePass, weight: 0.1 }
+    ]);
+    const rawText = [
+      suggestedName ? `NAME: ${suggestedName}` : "",
+      cardNumber ? `NUMBER: ${cardNumber}` : "",
+      namePass.text ? `NAME_RAW: ${namePass.text}` : "",
+      nameWidePass.text ? `NAME_WIDE_RAW: ${nameWidePass.text}` : "",
+      numberPass.text ? `NUMBER_RAW: ${numberPass.text}` : "",
+      numberWidePass.text ? `NUMBER_WIDE_RAW: ${numberWidePass.text}` : ""
+    ].filter(Boolean).join("\n");
+
+    return {
+      rawText,
+      suggestedName,
+      confidence,
+      candidates,
+      cardNumber
+    };
+  } finally {
+    await worker.terminate();
   }
 }
 
@@ -297,3 +471,6 @@ function weightedConfidence(entries: Array<{ pass: OCRPass; weight: number }>): 
   const total = entries.reduce((sum, entry) => sum + (Number.isFinite(entry.pass.confidence) ? entry.pass.confidence * entry.weight : 0), 0);
   return Number((total / totalWeight).toFixed(2));
 }
+
+
+

@@ -12,7 +12,7 @@ Webapp responsiva per:
 
 - Web app vanilla HTML/CSS/JavaScript in `web/`
 - Backend Node/TypeScript in `backend/`
-- OCR via Tesseract.js esposto da `POST /ocr`
+- Riconoscimento carta via Gemini con fallback Tesseract esposto da `POST /ocr`
 - Ricerca carte via `GET /cards/search?name=...`
 - PokeWallet API primaria, Pokemon TCG API fallback
 - Archivio locale browser con IndexedDB
@@ -35,8 +35,10 @@ Il repository include [render.yaml](C:\Sviluppo\WORKSPACE_AI\CODEX_APP\_PERSONAL
 
 Variabili ambiente richieste:
 
+- `GEMINI_API_KEY`
 - `POKEWALLET_API_KEY`
 - `POKEMON_TCG_API_KEY` opzionale
+- `GEMINI_MODEL` opzionale, default `gemini-2.5-flash`
 - `PORT` viene gestita da Render automaticamente
 
 Comandi usati da Render:
@@ -52,5 +54,6 @@ Nella schermata `Impostazioni`:
 
 - `Backend OCR`: in locale lascia `http://localhost:8787`
 - `Chiave PokeWallet API`: opzionale se la chiave e gia impostata sul server; utile solo in locale
+- `Chiave Gemini API`: impostata su Render o in locale per il riconoscimento AI
 - `Chiave Pokemon TCG API fallback`: opzionale
 - `Dimensione mazzo`: 40-60 carte
