@@ -369,7 +369,7 @@ function createStoredCard({ imageDataUrl, ocr, tcgCard }) {
     ocrWeakness: ocr.weakness || "",
     ocrResistance: ocr.resistance || "",
     ocrRetreatCost: ocr.retreatCost || "",
-    ocrDescription: ocr.description || "",
+    ocrDescription: resolveDescription({ description: ocr.description, raw: tcgCard?.raw }, attacks),
     createdAt: Date.now(),
   };
 }
@@ -378,15 +378,39 @@ function normalizeAttacks(attacks) {
   if (!Array.isArray(attacks)) return [];
   return attacks
     .map((attack) => {
-      const name = String(attack?.name || attack?.attack || "").trim();
-      const description = String(attack?.description || attack?.text || attack?.effect || "").trim();
+      if (typeof attack === "string") {
+        const cleaned = attack.replace(/<br\s*\/?>(\s*)/gi, "\n").trim();
+        if (!cleaned) return null;
+        const [headline, ...tail] = cleaned.split(/\n+/);
+        const firstLine = String(headline || "").trim();
+        const secondLine = String(tail.join(" ") || "").trim();
+        const nameFromBracket = firstLine.match(/^\[(.*?)\]\s*(.*)$/);
+        const name = String(nameFromBracket?.[2] || firstLine).trim();
+        const description = secondLine || String(firstLine).replace(/^\[(.*?)\]\s*/, "").trim();
+        return { name, description };
+      }
+
+      const name = String(attack?.name || attack?.attack || attack?.title || "").trim();
+      const description = String(attack?.description || attack?.text || attack?.effect || attack?.raw || "").trim();
       if (!name && !description) return null;
       return { name, description };
     })
     .filter(Boolean);
 }
 
+function resolveDescription(source, attacks = []) {
+  const explicit = source?.ocrDescription || source?.description || source?.raw?.card_info?.card_text || source?.raw?.card_text || source?.raw?.flavorText || source?.raw?.flavor_text || "";
+  if (String(explicit || "").trim()) return String(explicit).trim();
+  const normalizedAttacks = normalizeAttacks(attacks);
+  return normalizedAttacks
+    .map((attack) => attack.description)
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+}
+
 function renderAll() {
+
   renderCounters();
   renderSettings();
   renderArchive();
@@ -444,11 +468,11 @@ function openDetail(cardId) {
 }
 
 function renderDetail(card) {
-  const attacks = card.ocrAttacks || card.raw?.attacks || [];
+  const attacks = normalizeAttacks(card.ocrAttacks || card.raw?.attacks || []);
   const weaknesses = card.ocrWeakness || card.raw?.weaknesses?.[0]?.type || "";
   const resistance = card.ocrResistance || card.raw?.resistances?.[0]?.type || "";
   const retreatCost = card.ocrRetreatCost || card.raw?.retreatCost?.join?.(", ") || "";
-  const description = card.ocrDescription || card.raw?.flavorText || card.raw?.description || "";
+  const description = resolveDescription(card, attacks);
   const attackEditorValue = serializeAttacks(attacks);
   const imageUrl = getCardImageUrl(card);
   const providerPrices = formatProviderPrices(card.prices);
@@ -513,7 +537,7 @@ function renderAttackList(attacks) {
     return "<li>n/d</li>";
   }
 
-  return attacks.map((attack) => {
+  return normalizeAttacks(attacks).map((attack) => {
     const name = escapeHtml(attack?.name || "");
     const description = escapeHtml(attack?.description || attack?.text || "");
     if (!name && !description) {
@@ -616,7 +640,7 @@ async function syncCardFromPokeWallet(cardId) {
 }
 
 function mergePokeWalletCard(current, providerCard) {
-  const attacks = normalizeAttacks(providerCard?.attacks || []);
+  const attacks = normalizeAttacks(providerCard?.attacks || providerCard?.raw?.card_info?.attacks || []);
   const setName = providerCard?.set?.name || providerCard?.setName || current.setName || "";
   const setId = providerCard?.set?.id || providerCard?.setId || current.setId || "";
   const setCode = providerCard?.setCode || current.setCode || providerCard?.raw?.card_info?.set_code || "";
@@ -655,7 +679,7 @@ function mergePokeWalletCard(current, providerCard) {
     ocrWeakness: providerCard?.weakness || current.ocrWeakness,
     ocrResistance: providerCard?.resistance || current.ocrResistance,
     ocrRetreatCost: providerCard?.retreatCost || current.ocrRetreatCost,
-    ocrDescription: providerCard?.description || current.ocrDescription,
+    ocrDescription: resolveDescription({ description: providerCard?.description, raw: providerCard?.raw }, attacks) || current.ocrDescription,
     pokewalletId,
     pokewalletImageUrl: imageUrl,
     pokewalletCard: providerCard,
